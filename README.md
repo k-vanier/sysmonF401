@@ -202,7 +202,7 @@ sysrc sysmonf401_args="-iface em0"
 service sysmonf401 start
 ```
 
-When the data stops, the dot turns red after 5 s, and the screen goes back to
+When the data stops, the board's blue LED goes off after 5 s, and the screen goes back to
 "En attente du serveur" after one minute.
 
 ## Protocol
