@@ -266,6 +266,12 @@ static int parse_line(char *line) {
 void sysmon_init(void) {
   st7789_init(FLIP);
   st7789_backlight(1);
+  /* Mire au démarrage : rouge, vert, bleu. Si elle n'apparaît pas, voir câblage / alimentation. */
+  static const uint16_t test[] = {RGB565(255, 0, 0), RGB565(0, 255, 0), RGB565(0, 0, 255)};
+  for (int i = 0; i < 3; i++) {
+    st7789_fill_rect(0, 0, W, H, test[i]);
+    HAL_Delay(400);
+  }
   draw_waiting();
 }
 
