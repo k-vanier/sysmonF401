@@ -55,6 +55,16 @@ Flash it through the STM32 ROM bootloader (USB DFU): hold **BOOT0**, press and r
 pio run -t upload
 ```
 
+A ready-made `firmware/firmware.bin` is committed, for machines where PlatformIO has no ARM
+toolchain (FreeBSD). Flash it with the system `dfu-util` (`pkg install dfu-util`), from `firmware/`:
+
+```
+dfu-util -a 0 -s 0x08000000:leave -D firmware.bin
+```
+
+After changing the firmware, refresh it with
+`cp .pio/build/blackpill_f401cc/firmware.bin firmware.bin`.
+
 On Windows, `dfu-util` needs the WinUSB driver on the "STM32 BOOTLOADER" device
 (install it once with [Zadig](https://zadig.akeo.ie/)). Alternative without a driver change:
 [STM32CubeProgrammer](https://www.st.com/en/development-tools/stm32cubeprog.html) in USB mode,
