@@ -16,8 +16,7 @@ download / upload rates, sent once a second by the server over USB serial.
 *Rendered by the firmware's own drawing code on a PC (`tools/preview`), scaled up ×2.*
 
 - White background. Left: an animated GIF (FreeBSD's Beastie by default), with the
-  system version underneath (`uname -r`, e.g. 15.0-RELEASE-p9) and a status dot
-  (green = data is arriving, red = nothing for 5 s).
+  system version underneath (`uname -r`, e.g. 15.0-RELEASE-p9).
 - Right: CPU, RAM and CPU temperature in large anti-aliased digits with a bar each
   (red above 80 %, or from 75 °C); download / upload rates and their history
   (download as a green area, upload as a violet line, ~70 s).
@@ -82,11 +81,11 @@ The current animation is `tools/beastie_trident.gif` (8 s, 120 frames), built wi
 
 ```
 pip install pillow
-python tools/mkassets.py --crop 135,12,485,346 --noise 800 --max-h 128 --gamma 0.7 tools/beastie_trident.gif firmware/sysmonf401
+python tools/mkassets.py --crop 135,12,485,346 --noise 800 --max-h 128 --gamma 0.5 tools/beastie_trident.gif firmware/sysmonf401
 ```
 
-It keeps one frame in two (`--step 2`, 60 frames of 133 ms, 134x128, 152 KB), brightened
-(`--gamma 0.7`); the firmware takes 228 KB of the F401CC's 256 KB of flash. For another GIF (white background
+It keeps one frame in two (`--step 2`, 60 frames of 133 ms, 134x128, 154 KB), brightened
+(`--gamma 0.5`); the firmware takes 230 KB of the F401CC's 256 KB of flash. For another GIF (white background
 works best), run the script with its path and look at the sizes it prints; for a longer
 or larger one, raise `--step` or `--noise`, or lower `--max-h` / `--colors`. Then build and
 flash.

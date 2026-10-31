@@ -20,7 +20,7 @@
 #include <string.h>
 
 #define FLIP 0             /* 1 = écran monté à l'envers */
-#define TIMEOUT_MS 5000    /* au-delà sans données : pastille rouge */
+#define TIMEOUT_MS 5000    /* au-delà sans données : hors ligne (LED éteinte) */
 #define WAITING_MS 60000   /* au-delà : retour à l'écran d'attente */
 
 #define W ST7789_W
@@ -35,7 +35,6 @@
 #define C_RAM       RGB565(140, 80, 220)
 #define C_TEMP      RGB565(240, 140, 20)
 #define C_RED       RGB565(220, 40, 40)
-#define C_GREEN     RGB565(30, 180, 90)
 #define C_DOWN      RGB565(20, 170, 90)
 #define C_UP        RGB565(150, 90, 230)
 
@@ -101,23 +100,19 @@ static void fit(char *s, const Font *f, int maxw) {
   }
 }
 
-/* Sous l'animation : pastille d'état et version du système (« 15.0-RELEASE-p9 »),
- * en police moyenne si elle tient, sinon en petite. Rien reçu : la pastille seule. */
+/* Sous l'animation : version du système (« 15.0-RELEASE-p9 »), centrée, en police
+ * moyenne si elle tient, sinon en petite. Rien reçu : rien. */
 static void draw_label(void) {
   char text[40];
-  int dot = 8, gap = 5, maxw = LABEL_W - 2 - dot - gap;
+  int maxw = LABEL_W - 4;
   strcpy(text, st.label);
   const Font *f = &font_medium;
   if (gfx_text_width(f, text) > maxw) f = &font_small;
   fit(text, f, maxw);
 
   st7789_fill_rect(0, LABEL_Y, LABEL_W, font_medium.height, C_BG);
-  int tw = gfx_text_width(f, text);
-  int x = (LABEL_W - (dot + (tw ? gap + tw : 0))) / 2;
-  gfx_round_rect(x, LABEL_Y + (font_medium.height - dot) / 2, dot, dot, dot / 2,
-                 online ? C_GREEN : C_RED, C_BG);
-  if (tw)
-    gfx_text(x + dot + gap, LABEL_Y + (font_medium.height - f->height) / 2, f, text, C_TEXT, C_BG);
+  gfx_text((LABEL_W - gfx_text_width(f, text)) / 2, LABEL_Y + (font_medium.height - f->height) / 2,
+           f, text, C_TEXT, C_BG);
 }
 
 /* --- Colonne de droite --- */
@@ -315,10 +310,7 @@ void sysmon_loop(void) {
     if (!parse_line(line)) continue;
     last_rx = HAL_GetTick();
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin); /* LED bleue : clignote à chaque ligne */
-    if (!online) {
-      online = 1;
-      draw_label();
-    }
+    online = 1;
     draw_stats();
   }
 
@@ -333,7 +325,6 @@ void sysmon_loop(void) {
   uint32_t idle = now - last_rx;
   if (online && idle > TIMEOUT_MS) {
     online = 0;
-    draw_label();
     HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET); /* éteinte */
   }
   if (layout_drawn && !online && idle > WAITING_MS) {
