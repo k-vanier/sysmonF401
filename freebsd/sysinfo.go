@@ -1,0 +1,126 @@
+package main
+
+// Mesures système FreeBSD, reprises de miniscreen/freebsd/sysinfo.go.
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"runtime"
+	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+)
+
+type cpuSampler struct{ idle, total uint64 }
+
+// Sample renvoie l'utilisation CPU (0-100) depuis l'appel précédent.
+// kern.cp_time = 5 compteurs C long : user, nice, sys, intr, idle.
+func (c *cpuSampler) Sample() float64 {
+	raw, err := unix.SysctlRaw("kern.cp_time")
+	sz := int(unsafe.Sizeof(uintptr(0))) // taille d'un long C
+	if err != nil || len(raw) < 5*sz {
+		return 0
+	}
+	var t, i uint64
+	for k := 0; k < 5; k++ {
+		var v uint64
+		if sz == 8 {
+			v = binary.NativeEndian.Uint64(raw[k*8:])
+		} else {
+			v = uint64(binary.NativeEndian.Uint32(raw[k*4:]))
+		}
+		t += v
+		if k == 4 {
+			i = v
+		}
+	}
+	di, dt := i-c.idle, t-c.total
+	c.idle, c.total = i, t
+	if dt == 0 {
+		return 0
+	}
+	return 100 * (1 - float64(di)/float64(dt))
+}
+
+// MemoryPct renvoie la RAM utilisée en pourcentage.
+// Disponible = pages libres + inactives + laundry (comme top) ; l'ARC ZFS compte
+// comme utilisé, sauf avec noARC (il est alors retiré de l'utilisé).
+func MemoryPct(noARC bool) (float64, bool) {
+	phys, err := unix.SysctlUint64("hw.physmem")
+	if err != nil || phys == 0 {
+		return 0, false
+	}
+	page, _ := unix.SysctlUint32("hw.pagesize")
+	var avail uint64
+	for _, s := range []string{"v_free_count", "v_inactive_count", "v_laundry_count"} {
+		n, _ := unix.SysctlUint32("vm.stats.vm." + s)
+		avail += uint64(n)
+	}
+	avail *= uint64(page)
+	if noARC {
+		if arc, err := unix.SysctlUint64("kstat.zfs.misc.arcstats.size"); err == nil {
+			avail += arc
+		}
+	}
+	return 100 * float64(phys-min(avail, phys)) / float64(phys), true
+}
+
+// CPUTemp renvoie la température CPU la plus haute (°C), lue dans
+// dev.cpu.N.temperature (modules coretemp ou amdtemp) ; ok=false si absente.
+func CPUTemp() (temp float64, ok bool) {
+	for n := 0; n < runtime.NumCPU(); n++ {
+		dk, err := unix.SysctlUint32(fmt.Sprintf("dev.cpu.%d.temperature", n)) // dixièmes de kelvin
+		if err != nil {
+			break
+		}
+		temp, ok = max(temp, (float64(int32(dk))-2731)/10), true
+	}
+	return temp, ok
+}
+
+// NetBytes renvoie le total d'octets reçus et envoyés, d'après netstat -ibn --libxo json.
+// ifaces vide = toutes les interfaces hors loopback ; ok=false en cas d'échec.
+func NetBytes(ifaces []string) (rx, tx uint64, ok bool) {
+	out, err := exec.Command("netstat", "-ibn", "--libxo", "json").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	var v struct {
+		Statistics struct {
+			Interface []struct {
+				Name    string `json:"name"`
+				Network string `json:"network"`
+				Rx      uint64 `json:"received-bytes"`
+				Tx      uint64 `json:"sent-bytes"`
+			} `json:"interface"`
+		} `json:"statistics"`
+	}
+	if json.Unmarshal(out, &v) != nil {
+		return 0, 0, false
+	}
+	for _, i := range v.Statistics.Interface {
+		if !strings.HasPrefix(i.Network, "<Link") {
+			continue
+		}
+		if len(ifaces) == 0 && strings.HasPrefix(i.Name, "lo") {
+			continue
+		}
+		if len(ifaces) > 0 && !contains(ifaces, i.Name) {
+			continue
+		}
+		rx, tx, ok = rx+i.Rx, tx+i.Tx, true
+	}
+	return rx, tx, ok
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# PROVIDE: sysmonf401
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Envoie CPU / RAM / température / réseau à l'afficheur Black Pill F401 + ST7789.
+# Réglages dans /etc/rc.conf (avec sysrc) :
+#   sysmonf401_enable="YES"
+#   sysmonf401_args=""   options, ex. "-iface em0 -brightness 60 -no-arc"
+#   sysmonf401_bin="/usr/local/bin/sysmonf401"
+#
+# daemon(8) relance sysmonf401 5 s après chaque sortie (afficheur débranché,
+# pas encore détecté au boot...) et envoie sa sortie dans syslog.
+
+. /etc/rc.subr
+
+name="sysmonf401"
+rcvar="sysmonf401_enable"
+
+load_rc_config $name
+
+: ${sysmonf401_enable:="NO"}
+: ${sysmonf401_args:=""}
+: ${sysmonf401_bin:="/usr/local/bin/sysmonf401"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+command_args="-P ${pidfile} -r -R 5 -S -T ${name} ${sysmonf401_bin} ${sysmonf401_args}"
+required_files="${sysmonf401_bin}"
+
+run_rc_command "$1"
