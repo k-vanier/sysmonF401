@@ -4,6 +4,8 @@ USB system monitor for a FreeBSD server: a **WeAct Studio Black Pill STM32F401**
 drives a **1.9" ST7789 TFT** (170x320) and shows CPU, RAM, CPU temperature and network
 download / upload rates, sent once a second by the server over USB serial.
 
+![The screen running on the server](docs/photo-screen.jpg)
+
 | Folder | Runs on | Content |
 |---|---|---|
 | [firmware/sysmonf401](firmware/sysmonf401) | Black Pill F401 | STM32CubeIDE project (HAL, USB CDC, ST7789 driver) |
@@ -41,6 +43,8 @@ download / upload rates, sent once a second by the server over USB serial.
 ## Wiring
 
 The screen is driven by SPI1. USB uses PA11 / PA12, SWD uses PA13 / PA14.
+
+![Wiring on the Black Pill](docs/photo-wiring.jpg)
 
 | ST7789 pin | Black Pill pin |
 |---|---|
