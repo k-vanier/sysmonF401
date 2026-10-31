@@ -35,12 +35,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageSequence
 # Caractères spéciaux : codes de contrôle du firmware -> caractère dessiné.
 UP, DOWN, DEGREE = chr(1), chr(2), chr(0x7F)
 SPECIAL = {UP: chr(0x2191), DOWN: chr(0x2193), DEGREE: chr(0xB0)}  # flèches, degré
-# (nom C, fichier, taille en px, caractères, hauteur gardée sous la ligne de base ou None)
+# (nom C, fichier, taille en px, caractères, lignes gardées sous la ligne de base ou None)
 ASCII = "".join(chr(c) for c in range(0x20, 0x7F))
 FONTS = [
     ("font_small", "Go-Medium.ttf", 14, ASCII + UP + DOWN + DEGREE, None),
     ("font_medium", "Go-Bold.ttf", 18, ASCII + UP + DOWN + DEGREE, None),
-    ("font_large", "Go-Bold.ttf", 28, "0123456789%.-C " + DEGREE, 1),  # chiffres : rien dessous
+    ("font_large", "Go-Bold.ttf", 28, "0123456789%.-C " + DEGREE, 1),  # chiffres : ni dessous ni vide au-dessus
 ]
 
 
@@ -68,16 +68,27 @@ def rgb565(c):
 
 
 def make_font(name, path, size, chars, below=None):
+    """below : lignes gardées sous la ligne de base (None : toute la descente). Avec
+    below, les lignes vides au-dessus de tous les glyphes sont retirées aussi : une
+    police de chiffres n'occupe alors que la hauteur de ses chiffres."""
     font = ImageFont.truetype(path, size)
     ascent, descent = font.getmetrics()
     height = ascent + (descent if below is None else below)
-    glyph_map = [0xFF] * 128
-    widths, offsets, data = [], [], bytearray()
-    for i, ch in enumerate(chars):
+    imgs = []
+    for ch in chars:
         real = SPECIAL.get(ch, ch)
         w = max(1, round(font.getlength(real)))
         img = Image.new("L", (w, height), 0)
         ImageDraw.Draw(img).text((0, ascent), real, font=font, fill=255, anchor="ls")
+        imgs.append(img)
+    if below is not None:
+        top = min((im.getbbox() or (0, height, 0, height))[1] for im in imgs)
+        imgs = [im.crop((0, top, im.width, height)) for im in imgs]
+        ascent, height = ascent - top, height - top
+    glyph_map = [0xFF] * 128
+    widths, offsets, data = [], [], bytearray()
+    for i, (ch, img) in enumerate(zip(chars, imgs)):
+        w = img.width
         glyph_map[ord(ch)] = i
         widths.append(w)
         offsets.append(len(data))

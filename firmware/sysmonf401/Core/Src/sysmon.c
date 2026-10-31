@@ -48,16 +48,19 @@
 /* Colonne de droite. */
 #define RX 144
 #define RW (W - 4 - RX)
-#define ROW_H 36
+#define ROW_H 32
 #define ROW_Y0 4
 #define BAR_H 6
+#define BAR_GAP 3 /* entre le bas des chiffres et la barre */
 
-/* Réseau : deux lignes de texte, graphe à droite. */
-#define NET_Y 116
-#define GW 70
-#define GH 46
-#define GX (W - 4 - GW)
-#define GY (H - 4 - GH)
+/* Réseau : une ligne de débits (réception à gauche, envoi à droite), puis un graphe
+ * en miroir sur toute la largeur : réception au-dessus de l'axe, envoi en dessous. */
+#define NET_Y (ROW_Y0 + 3 * ROW_H + 2)
+#define GX RX
+#define GW RW
+#define GY (NET_Y + font_medium.height + 4)
+#define GH (H - 3 - GY)
+#define GH_MAX 64 /* pour le tampon d'une colonne */
 
 typedef struct {
   float cpu, ram, temp, down, up;
@@ -128,8 +131,6 @@ static void draw_layout(void) {
     int y = ROW_Y0 + i * ROW_H;
     gfx_text(RX, y + font_large.ascent - font_small.ascent, &font_small, labels[i], C_DIM, C_BG);
   }
-  gfx_text(RX, NET_Y, &font_medium, CH_DOWN, C_DOWN, C_BG);
-  gfx_text(RX, NET_Y + 24, &font_medium, CH_UP, C_UP, C_BG);
   layout_drawn = 1;
 }
 
@@ -142,7 +143,7 @@ static void draw_gauge(int row, float pct, uint16_t color, const char *text) {
     float p = pct < 0 ? 0 : pct > 100 ? 100 : pct;
     fill = (int)(p * RW / 100 + 0.5f);
   }
-  gfx_bar(RX, y + font_large.height + 2, RW, BAR_H, fill, color, C_TRACK, C_BG);
+  gfx_bar(RX, y + font_large.height + BAR_GAP, RW, BAR_H, fill, color, C_TRACK, C_BG);
 }
 
 static uint16_t alert(uint16_t c, float v, float limit) { return v >= limit ? C_RED : c; }
@@ -153,11 +154,13 @@ static void fmt_int(char *out, size_t n, float v, const char *unit) {
   else snprintf(out, n, "%d%s", (int)(v + 0.5f), unit);
 }
 
-/* Débit en octets/s : « 820 Ko/s », « 12.3 Mo/s ». Sans %f (newlib-nano). */
-static void fmt_rate(char *out, size_t n, float b) {
+/* Débit en octets/s, en nombre et unité : « 820 » « Ko/s », « 12.3 » « Mo/s ».
+ * Sans %f (newlib-nano). */
+static void fmt_rate(char *num, size_t n, const char **unit, float b) {
   static const char *units[] = {"o/s", "Ko/s", "Mo/s", "Go/s"};
+  *unit = "";
   if (isnan(b)) {
-    snprintf(out, n, "--");
+    snprintf(num, n, "--");
     return;
   }
   int u = 0;
@@ -165,42 +168,68 @@ static void fmt_rate(char *out, size_t n, float b) {
     b /= 1024;
     u++;
   }
+  *unit = units[u];
   if (b < 10 && u > 0) {
     unsigned t = (unsigned)(b * 10 + 0.5f); /* dixièmes */
-    snprintf(out, n, "%u.%u %s", t / 10, t % 10, units[u]);
+    snprintf(num, n, "%u.%u", t / 10, t % 10);
   } else {
-    snprintf(out, n, "%u %s", (unsigned)(b + 0.5f), units[u]);
+    snprintf(num, n, "%u", (unsigned)(b + 0.5f));
   }
+}
+
+/* Une colonne de débit : flèche et nombre en couleur, unité en petit sur la même
+ * ligne de base ; le reste de la colonne (largeur w) est effacé. */
+static void draw_rate(int x, int w, const char *arrow, float b, uint16_t color) {
+  char num[12];
+  const char *unit;
+  fmt_rate(num, sizeof num, &unit, b);
+  const Font *m = &font_medium, *sm = &font_small;
+  int end = x + w;
+  x = gfx_text(x, NET_Y, m, arrow, color, C_BG);
+  x = gfx_text(x, NET_Y, m, " ", color, C_BG);
+  x = gfx_text(x, NET_Y, m, num, color, C_BG);
+  x = gfx_text(x, NET_Y, m, " ", C_DIM, C_BG);
+  int uy = NET_Y + m->ascent - sm->ascent, uw = gfx_text_width(sm, unit);
+  st7789_fill_rect(x, NET_Y, uw, uy - NET_Y, C_BG);
+  x = gfx_text(x, uy, sm, unit, C_DIM, C_BG);
+  st7789_fill_rect(x - uw, uy + sm->height, uw, NET_Y + m->height - uy - sm->height, C_BG);
+  st7789_fill_rect(x, NET_Y, end - x, m->height, C_BG);
 }
 
 /* Historique réseau : un point par ligne reçue, les plus récents à droite. */
 static float hist_down[GW], hist_up[GW];
 static int hist_len;
 
+/* Hauteur en pixels de v sur une demi-hauteur h, pour une échelle top. */
+static int bar_px(float v, float top, int h) {
+  int n = (int)(v / top * h + 0.5f);
+  return n > h ? h : n;
+}
+
 static void draw_graph(void) {
-  static uint16_t col[GH];
-  float top = 1024; /* échelle mini 1 Ko/s */
+  static uint16_t col[GH_MAX];
+  int gh = GH > GH_MAX ? GH_MAX : GH, mid = gh / 2, hd = mid, hu = gh - mid - 1;
+  /* Une échelle par sens : l'envoi, souvent bien plus faible, reste lisible. */
+  float top_d = 1024, top_u = 1024; /* échelle mini 1 Ko/s */
   for (int i = 0; i < hist_len; i++) {
-    if (hist_down[i] > top) top = hist_down[i];
-    if (hist_up[i] > top) top = hist_up[i];
+    if (hist_down[i] > top_d) top_d = hist_down[i];
+    if (hist_up[i] > top_u) top_u = hist_up[i];
   }
-  /* Colonne par colonne : fond, aire de réception en dégradé, ligne d'envoi. */
-  int off = GW - hist_len, prev_uy = -1;
+  /* Colonne par colonne : réception au-dessus de l'axe, envoi en dessous, en aires
+   * dégradées (soutenues au bord, pâles vers l'axe) avec un liseré au bord. */
+  int off = GW - hist_len;
   for (int x = 0; x < GW; x++) {
     int i = x - off;
-    for (int y = 0; y < GH; y++) col[y] = (y == GH - 1) ? C_TRACK : C_BG;
+    for (int y = 0; y < gh; y++) col[y] = C_BG;
+    col[mid] = C_TRACK;
     if (i >= 0) {
-      int dh = (int)(hist_down[i] / top * (GH - 2) + 0.5f);
-      for (int y = GH - dh; y < GH; y++) /* plus soutenu en haut de l'aire, pâle en bas */
-        col[y] = gfx_blend(C_DOWN, C_BG, 150 - 110 * (y - (GH - dh)) / GH);
-      if (dh > 0) col[GH - dh] = C_DOWN;
-      int uy = GH - 2 - (int)(hist_up[i] / top * (GH - 2) + 0.5f);
-      int a = prev_uy < 0 ? uy : prev_uy, b = uy;
-      if (a > b) { int t = a; a = b; b = t; }
-      for (int y = a; y <= b; y++) col[y] = C_UP;
-      prev_uy = uy;
+      int d = bar_px(hist_down[i], top_d, hd), u = bar_px(hist_up[i], top_u, hu);
+      for (int k = 1; k <= d; k++) col[mid - k] = gfx_blend(C_DOWN, C_BG, 60 + 110 * k / hd);
+      if (d) col[mid - d] = C_DOWN;
+      for (int k = 1; k <= u; k++) col[mid + k] = gfx_blend(C_UP, C_BG, 60 + 110 * k / hu);
+      if (u) col[mid + u] = C_UP;
     }
-    st7789_blit(GX + x, GY, 1, GH, col);
+    st7789_blit(GX + x, GY, 1, gh, col);
   }
 }
 
@@ -216,13 +245,8 @@ static void draw_stats(void) {
   fmt_int(buf, sizeof buf, st.temp, CH_DEGREE "C");
   draw_gauge(2, st.temp, alert(C_TEMP, st.temp, 75), buf);
 
-  int tx = RX + 18, tw = GX - 2 - tx; /* jusqu'au graphe : efface tout ancien texte */
-  fmt_rate(buf, sizeof buf, st.down);
-  st7789_fill_rect(gfx_text(tx, NET_Y, &font_medium, buf, C_TEXT, C_BG), NET_Y,
-                   tw - gfx_text_width(&font_medium, buf), font_medium.height, C_BG);
-  fmt_rate(buf, sizeof buf, st.up);
-  st7789_fill_rect(gfx_text(tx, NET_Y + 24, &font_medium, buf, C_TEXT, C_BG), NET_Y + 24,
-                   tw - gfx_text_width(&font_medium, buf), font_medium.height, C_BG);
+  draw_rate(RX, RW / 2 - 4, CH_DOWN, st.down, C_DOWN);
+  draw_rate(RX + RW / 2 + 4, RW / 2 - 4, CH_UP, st.up, C_UP);
 
   if (hist_len == GW) {
     memmove(hist_down, hist_down + 1, (GW - 1) * sizeof(float));

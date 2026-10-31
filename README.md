@@ -18,8 +18,9 @@ download / upload rates, sent once a second by the server over USB serial.
 - White background. Left: an animated GIF (FreeBSD's Beastie by default), with the
   system version underneath (`uname -r`, e.g. 15.0-RELEASE-p9).
 - Right: CPU, RAM and CPU temperature in large anti-aliased digits with a bar each
-  (red above 80 %, or from 75 °C); download / upload rates and their history
-  (download as a green area, upload as a violet line, ~70 s).
+  (red above 80 %, or from 75 °C); download (green) and upload (violet) rates on one
+  line, and their history over ~3 min as a mirrored graph across the full width:
+  download above the axis, upload below, each with its own scale.
 
 ## Wiring
 
