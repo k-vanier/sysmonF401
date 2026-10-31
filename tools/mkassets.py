@@ -33,14 +33,17 @@ import sys
 from PIL import Image, ImageDraw, ImageFont, ImageSequence
 
 # Caractères spéciaux : codes de contrôle du firmware -> caractère dessiné.
-UP, DOWN, DEGREE = chr(1), chr(2), chr(0x7F)
-SPECIAL = {UP: chr(0x2191), DOWN: chr(0x2193), DEGREE: chr(0xB0)}  # flèches, degré
+UP, DOWN, TRI_UP, TRI_DOWN, DEGREE = chr(1), chr(2), chr(3), chr(4), chr(0x7F)
+SPECIAL = {UP: chr(0x2191), DOWN: chr(0x2193), TRI_UP: chr(0x25B2), TRI_DOWN: chr(0x25BC),
+           DEGREE: chr(0xB0)}  # flèches, triangles, degré
+EXTRA = UP + DOWN + TRI_UP + TRI_DOWN + DEGREE
 # (nom C, fichier, taille en px, caractères, lignes gardées sous la ligne de base ou None)
 ASCII = "".join(chr(c) for c in range(0x20, 0x7F))
 FONTS = [
-    ("font_small", "Go-Medium.ttf", 14, ASCII + UP + DOWN + DEGREE, None),
-    ("font_medium", "Go-Bold.ttf", 18, ASCII + UP + DOWN + DEGREE, None),
-    ("font_large", "Go-Bold.ttf", 28, "0123456789%.-C " + DEGREE, 1),  # chiffres : ni dessous ni vide au-dessus
+    ("font_small", "Go-Medium.ttf", 14, ASCII + EXTRA, None),
+    ("font_medium", "Go-Bold.ttf", 18, ASCII + EXTRA, None),
+    # chiffres et tailles (87G, 2/3, inf) : ni dessous ni vide au-dessus
+    ("font_large", "Go-Bold.ttf", 28, "0123456789%.-/? CGKMTinf" + DEGREE, 1),
 ]
 
 
@@ -272,6 +275,8 @@ typedef struct {
 /* Caractères spéciaux des polices small et medium (et ° dans large). */
 #define CH_UP     "\\x01"
 #define CH_DOWN   "\\x02"
+#define CH_TRI_UP   "\\x03" /* triangle plein vers le haut */
+#define CH_TRI_DOWN "\\x04"
 #define CH_DEGREE "\\x7f"
 
 extern const Font font_small, font_medium, font_large;

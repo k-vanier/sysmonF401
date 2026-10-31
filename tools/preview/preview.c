@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     snprintf(name, sizeof name, "anim_%d", i);
     shot(dir, name);
   }
-  char line[160];
+  char line[320];
   for (int s = 0; s < 70; s++) {
     double k = s / 70.0;
     snprintf(line, sizeof line, "cpu=%.1f ram=%.1f temp=%.1f down=%.0f up=%.0f os=15.0-RELEASE-p9\n",
@@ -116,5 +116,25 @@ int main(int argc, char **argv) {
   shot(dir, "4_partiel");
   run(6000);
   shot(dir, "5_hors_ligne");
+
+  /* Page torrents : elle s'affiche dès qu'un résumé arrive (la page système est là
+   * depuis plus de 10 s), est redessinée quand il change, puis cède la place. */
+  static const char *sys = "cpu=35 ram=52 temp=58 down=2400000 up=310000 os=15.0-RELEASE-p9\n";
+  static const char *tor[] = {
+    "tdl=2 tmax=3 tatt=1 tfree=87G tavail=29G tup=44.1T tdown=28.0T tratio=1.58 ttopr=6.99 "
+    "ttopn=Groot's_Firs tflopr=0.04 tflopn=Nightcrawler tact=DL_complet tage=720\n",
+    "tdl=3 tmax=3 tpct=87,45,20 tatt=1 tfree=98G tneed=12G tup=44.0T tdown=28.0T tratio=1.57 terr=2 "
+    "ttopr=6.95 tflopr=0.07 tact=-1_rotation,_+Some.Movie.2022 tage=30\n",
+    "tfree=98G terror=Transmission_injoignable tage=60\n",
+    "tdl=1 tmax=3 tpct=12 tfree=1.5T tavail=1.2T tup=850G tdown=0G tratio=- tact=RAS tage=7200\n",
+  };
+  static const char *names[] = {"6_torrents", "7_torrents_alertes", "8_torrents_erreur", "9_torrents_ancien"};
+  for (int i = 0; i < 4; i++) {
+    sysmon_rx((const uint8_t *)tor[i], strlen(tor[i]));
+    send(sys);
+    shot(dir, names[i]);
+  }
+  for (int s = 0; s < 8; s++) send(sys); /* 10 s après le passage : retour à la page système */
+  shot(dir, "10_retour_systeme");
   return 0;
 }

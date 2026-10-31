@@ -3,6 +3,8 @@ package main
 // sysmonf401 : envoie une fois par seconde CPU / RAM / température / débit réseau
 // à l'afficheur Black Pill F401 + ST7789, sous forme d'une ligne de texte :
 //   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=15.0-RELEASE-p9
+// Toutes les 5 mesures, une seconde ligne porte le résumé des torrents de
+// c411_transmission s'il existe (voir torrents.go).
 // Sort en erreur si l'afficheur disparaît ; rc.d (daemon -r) le relance.
 
 import (
@@ -22,6 +24,7 @@ func main() {
 	iface := flag.String("iface", "", "interfaces réseau à compter, séparées par des virgules (vide = toutes sauf lo)")
 	label := flag.String("label", "", "texte affiché sous l'animation (par défaut : la version du système, comme uname -r)")
 	noARC := flag.Bool("no-arc", false, "ne pas compter l'ARC ZFS comme RAM utilisée")
+	torrents := flag.String("torrents", "/var/log/torrents_status", "résumé des torrents de c411_transmission (vide = aucun)")
 	flag.Parse()
 
 	name := *port
@@ -69,7 +72,7 @@ func main() {
 	prevRx, prevTx, netOK := NetBytes(ifaces)
 	prevT := time.Now()
 
-	for {
+	for n := 0; ; n++ {
 		select {
 		case <-sig:
 			return
@@ -93,6 +96,11 @@ func main() {
 		prevRx, prevTx, netOK, prevT = rx, tx, ok, now
 		fmt.Fprintf(&b, " os=%s", *label)
 		send(b.String())
+		if *torrents != "" && n%5 == 0 {
+			if t, ok := TorrentLine(*torrents); ok {
+				send(t)
+			}
+		}
 	}
 }
 

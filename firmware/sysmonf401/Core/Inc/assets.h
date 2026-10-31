@@ -28,6 +28,8 @@ typedef struct {
 /* Caractères spéciaux des polices small et medium (et ° dans large). */
 #define CH_UP     "\x01"
 #define CH_DOWN   "\x02"
+#define CH_TRI_UP   "\x03" /* triangle plein vers le haut */
+#define CH_TRI_DOWN "\x04"
 #define CH_DEGREE "\x7f"
 
 extern const Font font_small, font_medium, font_large;

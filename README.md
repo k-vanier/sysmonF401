@@ -9,9 +9,9 @@ download / upload rates, sent once a second by the server over USB serial.
 | [firmware/sysmonf401](firmware/sysmonf401) | Black Pill F401 | STM32CubeIDE project (HAL, USB CDC, ST7789 driver) |
 | [freebsd](freebsd) | FreeBSD server | `sysmonf401` sender (Go) and its rc.d service |
 
-| Dashboard | Waiting for the server |
-|---|---|
-| ![Dashboard](docs/screen.png) | ![Waiting](docs/waiting.png) |
+| System page | Torrents page | Waiting for the server |
+|---|---|---|
+| ![System page](docs/screen.png) | ![Torrents page](docs/torrents.png) | ![Waiting](docs/waiting.png) |
 
 *Rendered by the firmware's own drawing code on a PC (`tools/preview`), scaled up ×2.*
 
@@ -21,6 +21,20 @@ download / upload rates, sent once a second by the server over USB serial.
   (red above 80 %, or from 75 °C); download (pink) and upload (violet) rates on one
   line, and their history over ~3 min as a mirrored graph across the full width:
   download above the axis, upload below, each with its own scale.
+- When the server sends the summary of [c411_transmission](https://github.com/k-vanier/c411_transmission)
+  (`/var/log/torrents_status`), the right column switches every 10 s between that system
+  page and a torrents page:
+  - **DL**: downloads / slots (`2/3`), one bar segment per slot: pink filled to each
+    download's progress, violet for an added `.torrent` still waiting (`+1 att`), and
+    torrents in error in red (`2 err`);
+  - **ratio**: global ratio, with the totals sent ↑ and received ↓ since ever; the bar shows
+    sent (violet) against received (pink);
+  - **LIBRE**: free space; the bar is the part still available for new additions (all red
+    when space is missing);
+  - the best and worst finished torrents (▲ green, ▼ red, ratio and name), then what the
+    last run did (`DL complet`, `RAS`...) and `dispo` / `manque` on the right. A summary
+    older than an hour shows its age in orange; c411's error line shows as such.
+  The torrents page is left out when no summary arrived for 30 s (file missing).
 
 ## Wiring
 
@@ -186,6 +200,7 @@ Options:
 | `-label text` | `uname -r` | Text shown under the animation, e.g. `15.0-RELEASE-p9` |
 | `-brightness N` | unchanged | Backlight: 0 = off, anything else = on |
 | `-no-arc` | off | Do not count the ZFS ARC as used RAM |
+| `-torrents path` | `/var/log/torrents_status` | Summary of c411_transmission, read and sent every 5 s; empty = none |
 
 With jails, bridges or VLANs, the same traffic is counted on several interfaces:
 use `-iface` with the physical interface.
@@ -224,6 +239,17 @@ cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=15.0-RELEASE-p9
 
 A missing key shows `--`. So the board can be fed by anything, for example from a shell:
 `echo "cpu=50 ram=20 os=test" > /dev/cuaU0`.
+
+Every 5 s the sender adds a second line with the torrents summary (keys starting with `t`,
+built by `freebsd/torrents.go` from c411's line, `_` for spaces):
+
+```
+tdl=2 tmax=3 tpct=87,45 tatt=1 tfree=87G tavail=29G tup=44.1T tdown=28.0T tratio=1.58
+terr=1 ttopr=6.99 ttopn=Groot's_Firs tflopr=0.04 tflopn=Nightcrawler tact=DL_complet tage=720
+```
+
+`tneed` replaces `tavail` when space is missing, `terror` carries c411's error line, `tage`
+is the age of the summary in seconds.
 
 Sources: `kern.cp_time` (CPU), `hw.physmem` and `vm.stats.vm.*` (RAM, available = free +
 inactive + laundry pages, as in `top`), `dev.cpu.N.temperature` (hottest core),
