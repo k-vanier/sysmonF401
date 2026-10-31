@@ -46,7 +46,7 @@ firmware package FW_F4 V1.28.3):
 
 - 25 MHz crystal, core at 84 MHz, USB at 48 MHz;
 - USB device CDC (virtual COM port), VID `0483` / PID `5740`, product "SysMon F401";
-- SPI1 master at 10.5 Mbit/s (safe with jumper wires), pins `TFT_CS`, `TFT_DC`, `TFT_RST`,
+- SPI1 master at 21 Mbit/s, pins `TFT_CS`, `TFT_DC`, `TFT_RST`,
   `TFT_BLK`, `LED`.
 
 Application code (kept when CubeMX regenerates the project):
@@ -81,7 +81,7 @@ python tools/mkassets.py my.gif firmware/sysmonf401
 ```
 
 then build and flash. The F401CC has 256 KB of flash: with the 16 Beastie frames
-(one in two of the GIF, `ANIM_FRAMES_STEP = 2`) the firmware takes 186 KB. For a longer or
+(one in two of the GIF, `ANIM_FRAMES_STEP = 2`) the firmware takes 172 KB. For a longer or
 larger GIF, raise `ANIM_FRAMES_STEP` or lower `ANIM_H` / `ANIM_COLORS` in the script.
 
 The BSD Daemon (Beastie) in `tools/beastie.gif` and in the generated `assets.c` is

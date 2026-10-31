@@ -13,7 +13,8 @@ typedef struct {
   const uint8_t *data;
 } Font;
 
-/* Animation : palette RGB565 commune, images compressées en RLE (voir mkassets.py). */
+/* Animation : palette RGB565 commune, images stockées colonne par colonne et
+ * compressées en RLE (voir mkassets.py). */
 typedef struct {
   uint16_t width, height, frames, duration_ms;
   const uint16_t *palette;

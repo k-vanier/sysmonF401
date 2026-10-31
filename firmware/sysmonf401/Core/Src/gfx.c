@@ -91,24 +91,27 @@ void gfx_bar(int x, int y, int w, int h, int fill, uint16_t color, uint16_t trac
   st7789_blit(x, y, w, h, buf);
 }
 
+/* Les images sont stockées colonne par colonne et envoyées de même, une fenêtre
+ * d'une colonne à la fois : en paysage la dalle se rafraîchit selon cet axe, la
+ * limite entre ancienne et nouvelle image reste donc une seule verticale au lieu
+ * d'une diagonale sur toute l'animation (scintillement). */
 void gfx_anim_frame(const Anim *a, int n, int x, int y) {
   const uint8_t *p = a->rle + a->offset[n];
-  uint32_t left = (uint32_t)a->width * a->height;
-  int k = 0;
-  st7789_begin(x, y, a->width, a->height);
-  while (left) {
-    uint8_t t = *p++;
-    int run = (t & 0x7F) + 1;
-    uint16_t c = t < 0x80 ? a->palette[*p++] : 0;
-    while (run-- && left) {
-      buf[k++] = t < 0x80 ? c : a->palette[*p++];
-      left--;
-      if (k == (int)(sizeof buf / sizeof buf[0])) {
-        st7789_push(buf, k);
-        k = 0;
-      }
+  int h = a->height, k = 0, col = 0, run = 0, literal = 0;
+  uint16_t c = 0;
+  while (col < a->width) {
+    if (!run) {
+      uint8_t t = *p++;
+      run = (t & 0x7F) + 1;
+      literal = t >= 0x80;
+      if (!literal) c = a->palette[*p++];
+    }
+    buf[k++] = literal ? a->palette[*p++] : c;
+    run--;
+    if (k == h) { /* colonne complète */
+      st7789_blit(x + col, y, 1, h, buf);
+      col++;
+      k = 0;
     }
   }
-  if (k) st7789_push(buf, k);
-  st7789_end();
 }

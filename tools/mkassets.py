@@ -11,7 +11,9 @@ rendu dans une cellule de sa largeur d'avance, alpha sur 4 bits.
 Animation : chaque image est recadrée sur le sujet (union des zones non blanches
 de toutes les images, légende séparée exclue) et réduite à ANIM_H de haut. Le fond
 blanc est gardé : l'écran du firmware est sur fond blanc. Toutes
-les images partagent une palette ; chaque image est compressée en RLE :
+les images partagent une palette ; chaque image est stockée colonne par colonne
+(de gauche à droite, chaque colonne de haut en bas : l'axe de balayage de la dalle
+en paysage, ce qui limite le déchirement) et compressée en RLE :
   octet n < 0x80 : n+1 pixels de l'indice qui suit
   octet n >= 0x80 : (n & 0x7F)+1 indices littéraux qui suivent
 """
@@ -130,7 +132,9 @@ def make_anim(path):
     frames_rle, offsets = bytearray(), []
     for i in range(len(out)):
         offsets.append(len(frames_rle))
-        frames_rle.extend(rle(idx[i * w * ANIM_H:(i + 1) * w * ANIM_H]))
+        img = idx[i * w * ANIM_H:(i + 1) * w * ANIM_H]
+        cols = [img[y * w + x] for x in range(w) for y in range(ANIM_H)]
+        frames_rle.extend(rle(cols))
     c = [f"/* {os.path.basename(path)} : {len(out)} images {w}x{ANIM_H}, {duration} ms, "
          f"{len(palette)} couleurs */"]
     c.append(f"static const uint16_t anim_palette[] = {{{', '.join(f'0x{p:04X}' for p in palette)}}};")
@@ -185,7 +189,8 @@ typedef struct {
   const uint8_t *data;
 } Font;
 
-/* Animation : palette RGB565 commune, images compressées en RLE (voir mkassets.py). */
+/* Animation : palette RGB565 commune, images stockées colonne par colonne et
+ * compressées en RLE (voir mkassets.py). */
 typedef struct {
   uint16_t width, height, frames, duration_ms;
   const uint16_t *palette;
