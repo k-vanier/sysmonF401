@@ -22,7 +22,10 @@ void gfx_round_rect(int x, int y, int w, int h, int r, uint16_t color, uint16_t 
 /* Barre en gélule : les `fill` premiers pixels en color, le reste en track. */
 void gfx_bar(int x, int y, int w, int h, int fill, uint16_t color, uint16_t track, uint16_t bg);
 
-/* Image n de l'animation, coin haut gauche en (x, y). */
-void gfx_anim_frame(const Anim *a, int n, int x, int y);
+/* Animation, coin haut gauche en (x, y) : reset affiche la première image en
+ * entier, next passe à l'image n (la suivante de celle affichée) en n'envoyant
+ * que les morceaux de colonne qui changent. */
+void gfx_anim_reset(const Anim *a, int x, int y);
+void gfx_anim_next(const Anim *a, int n, int x, int y);
 
 #endif

@@ -1,6 +1,6 @@
 """Génère les ressources du firmware : polices lissées et animation GIF.
 
-    python mkassets.py <animation.gif> <dossier du projet CubeIDE>
+    python mkassets.py [options] <animation.gif> <dossier du projet CubeIDE>
 
 Écrit Core/Inc/assets.h et Core/Src/assets.c. Nécessite Pillow.
 
@@ -8,25 +8,28 @@ Polices : Go fonts (licence BSD, golang.org/x/image/font/gofont), cherchées dan
 le cache des modules Go ou dans le dossier donné par GOFONTS. Chaque glyphe est
 rendu dans une cellule de sa largeur d'avance, alpha sur 4 bits.
 
-Animation : chaque image est recadrée sur le sujet (union des zones non blanches
-de toutes les images, légende séparée exclue) et réduite à ANIM_H de haut. Le fond
-blanc est gardé : l'écran du firmware est sur fond blanc. Toutes
-les images partagent une palette ; chaque image est stockée colonne par colonne
-(de gauche à droite, chaque colonne de haut en bas : l'axe de balayage de la dalle
-en paysage, ce qui limite le déchirement) et compressée en RLE :
-  octet n < 0x80 : n+1 pixels de l'indice qui suit
-  octet n >= 0x80 : (n & 0x7F)+1 indices littéraux qui suivent
+Animation : chaque image est recadrée (--crop, sinon union des zones non blanches
+de toutes les images, légende séparée exclue), réduite pour tenir dans
+--max-w x --max-h, et son fond presque blanc est ramené au blanc pur de l'écran.
+Toutes les images partagent une palette. Les pixels sont rangés colonne par
+colonne (de gauche à droite, chaque colonne de haut en bas : l'axe de balayage de
+la dalle en paysage, ce qui limite le déchirement).
+
+La première image est stockée entière (key), puis chaque image n'est stockée que
+par ses différences avec la précédente (delta[i] : image i-1 -> i, delta[0] :
+dernière -> première). Une couleur proche de celle déjà affichée est gardée telle
+quelle, ce qui écarte le bruit de compression du GIF. Codage :
+  octet 0x00-0x7F : n+1 pixels de l'indice qui suit
+  octet 0x80-0xBF : (n & 0x3F)+1 indices littéraux qui suivent
+  octet 0xC0-0xFF : (n & 0x3F)+1 pixels inchangés (deltas seulement)
 """
 
+import argparse
 import glob
 import os
 import sys
 
 from PIL import Image, ImageDraw, ImageFont, ImageSequence
-
-ANIM_H = 120              # hauteur de l'animation à l'écran
-ANIM_FRAMES_STEP = 2      # 2 = une image sur deux (la flash ne loge pas les 32)
-ANIM_COLORS = 64
 
 # Caractères spéciaux : codes de contrôle du firmware -> caractère dessiné.
 UP, DOWN, DEGREE = chr(1), chr(2), chr(0x7F)
@@ -93,13 +96,9 @@ def make_font(name, path, size, chars, below=None):
     return "\n".join(c), len(data) + 3 * len(chars) + 128
 
 
-def make_anim(path):
-    src = Image.open(path)
-    frames = [f.convert("RGB") for f in ImageSequence.Iterator(src)][::ANIM_FRAMES_STEP]
-    durations = [f.info.get("duration", 100) for f in ImageSequence.Iterator(Image.open(path))]
-    duration = durations[0] * ANIM_FRAMES_STEP
-    # Recadrage : union des zones non blanches de toutes les images, réduite au plus
-    # haut bloc de lignes non vides (écarte une légende séparée par une bande blanche).
+def auto_crop(frames):
+    """Union des zones non blanches, réduite au plus haut bloc de lignes non vides
+    (écarte une légende séparée du sujet par une bande blanche)."""
     ink = None
     for f in frames:
         m = f.convert("L").point(lambda v: 255 if v < 235 else 0)
@@ -114,64 +113,117 @@ def make_anim(path):
                 best = (start, y)
             start = None
     b = ink.crop((0, best[0], ink.width, best[1])).getbbox()
-    bbox = (b[0], best[0] + b[1], b[2], best[0] + b[3])
-    if os.environ.get("ANIM_CROP"):  # x0,y0,x1,y1 pour forcer le cadre
-        bbox = tuple(int(v) for v in os.environ["ANIM_CROP"].split(","))
-    w = round((bbox[2] - bbox[0]) * ANIM_H / (bbox[3] - bbox[1]))
-    out = []
-    for f in frames:
-        out.append(f.crop(bbox).resize((w, ANIM_H), Image.LANCZOS))
-    # Palette commune : quantification d'une planche de toutes les images.
-    sheet = Image.new("RGB", (w, ANIM_H * len(out)))
-    for i, f in enumerate(out):
-        sheet.paste(f, (0, i * ANIM_H))
-    sheet = sheet.quantize(colors=ANIM_COLORS, method=Image.MEDIANCUT, dither=Image.NONE)
-    pal = sheet.getpalette()[:3 * ANIM_COLORS]
-    palette = [rgb565(tuple(pal[3 * i:3 * i + 3])) for i in range(len(pal) // 3)]
-    idx = list(sheet.get_flattened_data())
-    frames_rle, offsets = bytearray(), []
-    for i in range(len(out)):
-        offsets.append(len(frames_rle))
-        img = idx[i * w * ANIM_H:(i + 1) * w * ANIM_H]
-        cols = [img[y * w + x] for x in range(w) for y in range(ANIM_H)]
-        frames_rle.extend(rle(cols))
-    c = [f"/* {os.path.basename(path)} : {len(out)} images {w}x{ANIM_H}, {duration} ms, "
-         f"{len(palette)} couleurs */"]
-    c.append(f"static const uint16_t anim_palette[] = {{{', '.join(f'0x{p:04X}' for p in palette)}}};")
-    c.append(f"static const uint32_t anim_offset[] = {{{', '.join(map(str, offsets))}}};")
-    c.append(f"static const uint8_t anim_rle[{len(frames_rle)}] = {{\n{c_bytes(frames_rle)}\n}};")
-    c.append(f"const Anim anim = {{{w}, {ANIM_H}, {len(out)}, {duration}, anim_palette, "
-             f"anim_offset, anim_rle}};")
-    preview = sheet.convert("RGB")
-    return "\n".join(c), len(frames_rle) + 2 * len(palette), preview, (w, len(out))
+    return (b[0], best[0] + b[1], b[2], best[0] + b[3])
 
 
-def rle(idx):
+def whiten(f):
+    """Fond presque blanc (gris très clair, peu saturé) -> blanc pur."""
+    px = f.load()
+    for y in range(f.height):
+        for x in range(f.width):
+            r, g, b = px[x, y]
+            if min(r, g, b) > 232 and max(r, g, b) - min(r, g, b) < 14:
+                px[x, y] = (255, 255, 255)
+    return f
+
+
+def encode(seq, prev=None):
     out = bytearray()
-    i, n = 0, len(idx)
     lit = []
 
     def flush():
         while lit:
-            chunk = lit[:128]
-            del lit[:128]
+            chunk = lit[:64]
+            del lit[:64]
             out.append(0x80 | (len(chunk) - 1))
             out.extend(chunk)
 
+    i, n = 0, len(seq)
     while i < n:
+        if prev is not None and seq[i] == prev[i]:
+            flush()
+            j = i
+            while j < n and seq[j] == prev[j]:
+                j += 1
+            k = j - i
+            while k:
+                m = min(k, 64)
+                out.append(0xC0 | (m - 1))
+                k -= m
+            i = j
+            continue
         j = i
-        while j < n and j - i < 128 and idx[j] == idx[i]:
+        while j < n and j - i < 128 and seq[j] == seq[i]:
             j += 1
         if j - i >= 3:
             flush()
             out.append(j - i - 1)
-            out.append(idx[i])
+            out.append(seq[i])
             i = j
         else:
-            lit.append(idx[i])
+            lit.append(seq[i])
             i += 1
     flush()
     return out
+
+
+def make_anim(path, step, crop, max_w, max_h, colors, noise):
+    src = [f.convert("RGB") for f in ImageSequence.Iterator(Image.open(path))]
+    durations = [f.info.get("duration", 100) for f in ImageSequence.Iterator(Image.open(path))]
+    duration = round(sum(durations) / len(durations) * step)
+    frames = src[::step]
+    bbox = crop or auto_crop(frames)
+    cw, ch = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    scale = min(max_w / cw, max_h / ch)
+    w, h = round(cw * scale), round(ch * scale)
+    out = [whiten(f.crop(bbox).resize((w, h), Image.LANCZOS)) for f in frames]
+
+    # Palette commune : quantification d'une planche de toutes les images. La
+    # couleur la plus fréquente (le fond) est forcée au blanc pur s'il est clair.
+    sheet = Image.new("RGB", (w, h * len(out)))
+    for i, f in enumerate(out):
+        sheet.paste(f, (0, i * h))
+    q = sheet.quantize(colors=colors, method=Image.MEDIANCUT, dither=Image.NONE)
+    pal = q.getpalette()[:3 * colors]
+    idx = list(q.get_flattened_data())
+    bg = max(set(idx), key=idx.count)
+    if min(pal[3 * bg:3 * bg + 3]) > 230:
+        pal[3 * bg:3 * bg + 3] = [255, 255, 255]
+    ncol = len(pal) // 3
+    palette = [rgb565(tuple(pal[3 * i:3 * i + 3])) for i in range(ncol)]
+
+    def far(a, b):
+        return sum((pal[3 * a + c] - pal[3 * b + c]) ** 2 for c in range(3)) >= noise
+
+    n = w * h
+    cols = []
+    for i in range(len(out)):
+        img = idx[i * n:(i + 1) * n]
+        cols.append([img[y * w + x] for x in range(w) for y in range(h)])
+
+    key = encode(cols[0])
+    shown = list(cols[0])
+    deltas = {}
+    for i in list(range(1, len(cols))) + [0]:
+        # Retour à la première image : exact, pour que chaque tour reparte de key.
+        new = list(cols[0]) if i == 0 else [v if far(v, s) else s for v, s in zip(cols[i], shown)]
+        deltas[i] = encode(new, shown)
+        shown = new
+    data, offsets = bytearray(), []
+    for i in range(len(cols)):
+        offsets.append(len(data))
+        data.extend(deltas[i])
+
+    c = [f"/* {os.path.basename(path)} : {len(cols)} images {w}x{h}, {duration} ms, "
+         f"{ncol} couleurs, cadre {bbox} */"]
+    c.append(f"static const uint16_t anim_palette[] = {{{', '.join(f'0x{p:04X}' for p in palette)}}};")
+    c.append(f"static const uint8_t anim_key[{len(key)}] = {{\n{c_bytes(key)}\n}};")
+    c.append(f"static const uint32_t anim_offset[] = {{{', '.join(map(str, offsets))}}};")
+    c.append(f"static const uint8_t anim_delta[{len(data)}] = {{\n{c_bytes(data)}\n}};")
+    c.append(f"const Anim anim = {{{w}, {h}, {len(cols)}, {duration}, anim_palette, anim_key, "
+             f"anim_offset, anim_delta}};")
+    size = len(key) + len(data) + 4 * len(offsets) + 2 * ncol
+    return "\n".join(c), size, q.convert("RGB"), (w, h, len(cols), duration)
 
 
 HEADER = """/* Généré par tools/mkassets.py : ne pas modifier à la main. */
@@ -189,14 +241,17 @@ typedef struct {
   const uint8_t *data;
 } Font;
 
-/* Animation : palette RGB565 commune, images stockées colonne par colonne et
- * compressées en RLE (voir mkassets.py). */
+/* Animation : palette RGB565 commune, pixels rangés colonne par colonne, première
+ * image entière (key) puis différences d'une image à l'autre (voir mkassets.py). */
 typedef struct {
   uint16_t width, height, frames, duration_ms;
   const uint16_t *palette;
-  const uint32_t *offset;
-  const uint8_t *rle;
+  const uint8_t *key;
+  const uint32_t *offset; /* offset[i] : début dans delta du passage à l'image i */
+  const uint8_t *delta;
 } Anim;
+
+#define ANIM_PIXELS %d /* width * height, pour le tampon de l'image affichée */
 
 /* Caractères spéciaux des polices small et medium (et ° dans large). */
 #define CH_UP     "\\x01"
@@ -211,9 +266,20 @@ extern const Anim anim;
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    gif, proj = sys.argv[1], sys.argv[2]
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("gif")
+    ap.add_argument("project")
+    ap.add_argument("--step", type=int, default=2, help="garde une image sur N (défaut 2)")
+    ap.add_argument("--crop", help="cadre x0,y0,x1,y1 dans le GIF (défaut : automatique)")
+    ap.add_argument("--max-w", type=int, default=136, help="largeur maximale à l'écran (défaut 136)")
+    ap.add_argument("--max-h", type=int, default=120, help="hauteur maximale à l'écran (défaut 120)")
+    ap.add_argument("--colors", type=int, default=64, help="taille de la palette (défaut 64)")
+    ap.add_argument("--noise", type=int, default=300,
+                    help="écart de couleur (somme des carrés RVB) sous lequel un pixel affiché est gardé (défaut 300)")
+    ap.add_argument("--preview", help="écrit la planche des images quantifiées dans ce PNG")
+    a = ap.parse_args()
+    crop = tuple(int(v) for v in a.crop.split(",")) if a.crop else None
+
     fdir = gofonts_dir()
     parts, total = [], 0
     for name, file, size, chars, below in FONTS:
@@ -221,19 +287,19 @@ def main():
         parts.append(code)
         total += n
         print(f"{name}: {n} octets")
-    code, n, preview, (w, nf) = make_anim(gif)
+    code, n, preview, (w, h, nf, dur) = make_anim(a.gif, a.step, crop, a.max_w, a.max_h, a.colors, a.noise)
     parts.append(code)
     total += n
-    print(f"anim: {nf} images {w}x{ANIM_H}, {n} octets")
+    print(f"anim: {nf} images {w}x{h}, {dur} ms, {n} octets")
     print(f"total: {total} octets")
-    with open(os.path.join(proj, "Core", "Inc", "assets.h"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(HEADER)
-    with open(os.path.join(proj, "Core", "Src", "assets.c"), "w", encoding="utf-8", newline="\n") as f:
+    with open(os.path.join(a.project, "Core", "Inc", "assets.h"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(HEADER % (w * h))
+    with open(os.path.join(a.project, "Core", "Src", "assets.c"), "w", encoding="utf-8", newline="\n") as f:
         f.write("/* Généré par tools/mkassets.py : ne pas modifier à la main.\n"
                 " * Polices : Go fonts, licence BSD (golang.org/x/image/font/gofont). */\n"
                 '#include "assets.h"\n\n' + "\n\n".join(parts) + "\n")
-    if os.environ.get("ANIM_PREVIEW"):
-        preview.save(os.environ["ANIM_PREVIEW"])
+    if a.preview:
+        preview.save(a.preview)
 
 
 if __name__ == "__main__":

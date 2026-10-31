@@ -91,27 +91,52 @@ void gfx_bar(int x, int y, int w, int h, int fill, uint16_t color, uint16_t trac
   st7789_blit(x, y, w, h, buf);
 }
 
-/* Les images sont stockées colonne par colonne et envoyées de même, une fenêtre
- * d'une colonne à la fois : en paysage la dalle se rafraîchit selon cet axe, la
- * limite entre ancienne et nouvelle image reste donc une seule verticale au lieu
- * d'une diagonale sur toute l'animation (scintillement). */
-void gfx_anim_frame(const Anim *a, int n, int x, int y) {
-  const uint8_t *p = a->rle + a->offset[n];
-  int h = a->height, k = 0, col = 0, run = 0, literal = 0;
-  uint16_t c = 0;
-  while (col < a->width) {
-    if (!run) {
-      uint8_t t = *p++;
-      run = (t & 0x7F) + 1;
-      literal = t >= 0x80;
-      if (!literal) c = a->palette[*p++];
+/* Image affichée, en indices de palette, rangée colonne par colonne comme les
+ * données ; lo / hi : lignes modifiées de chaque colonne par la dernière image. */
+static uint8_t anim_idx[ANIM_PIXELS];
+static uint8_t anim_lo[256], anim_hi[256];
+
+/* Applique un flux codé (voir mkassets.py) à anim_idx en notant ce qui change. */
+static void anim_apply(const Anim *a, const uint8_t *p) {
+  int n = a->width * a->height, h = a->height, i = 0;
+  for (int c = 0; c < a->width; c++) anim_lo[c] = 255, anim_hi[c] = 0;
+  while (i < n) {
+    uint8_t t = *p++;
+    if (t >= 0xC0) { /* pixels inchangés */
+      i += (t & 0x3F) + 1;
+      continue;
     }
-    buf[k++] = literal ? a->palette[*p++] : c;
-    run--;
-    if (k == h) { /* colonne complète */
-      st7789_blit(x + col, y, 1, h, buf);
-      col++;
-      k = 0;
+    int run = t < 0x80 ? t + 1 : (t & 0x3F) + 1;
+    uint8_t v = t < 0x80 ? *p++ : 0;
+    while (run-- && i < n) {
+      int c = i / h, r = i % h;
+      anim_idx[i++] = t < 0x80 ? v : *p++;
+      if (r < anim_lo[c]) anim_lo[c] = r;
+      if (r > anim_hi[c]) anim_hi[c] = r;
     }
   }
+}
+
+/* Envoie les morceaux de colonne modifiés, une fenêtre d'une colonne à la fois :
+ * en paysage la dalle se rafraîchit selon cet axe, la limite entre ancienne et
+ * nouvelle image reste donc une seule verticale (pas de scintillement en diagonale). */
+static void anim_send(const Anim *a, int x, int y) {
+  int h = a->height;
+  for (int c = 0; c < a->width; c++) {
+    if (anim_lo[c] > anim_hi[c]) continue;
+    const uint8_t *col = anim_idx + c * h;
+    int n = anim_hi[c] - anim_lo[c] + 1;
+    for (int r = 0; r < n; r++) buf[r] = a->palette[col[anim_lo[c] + r]];
+    st7789_blit(x + c, y + anim_lo[c], 1, n, buf);
+  }
+}
+
+void gfx_anim_reset(const Anim *a, int x, int y) {
+  anim_apply(a, a->key);
+  anim_send(a, x, y);
+}
+
+void gfx_anim_next(const Anim *a, int n, int x, int y) {
+  anim_apply(a, a->delta + a->offset[n]);
+  anim_send(a, x, y);
 }

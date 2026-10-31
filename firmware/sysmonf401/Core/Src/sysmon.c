@@ -42,8 +42,9 @@
 
 /* Colonne de gauche : animation puis système et version. */
 #define LEFT_W 138
-#define ANIM_Y 4
-#define LABEL_Y (ANIM_Y + 120 + 2)
+#define LABEL_Y 126 /* l'animation (120 px de haut au plus) est centrée au-dessus */
+#define ANIM_X ((LEFT_W - anim.width) / 2)
+#define ANIM_Y ((LABEL_Y - anim.height) / 2)
 
 /* Colonne de droite. */
 #define RX 144
@@ -90,10 +91,6 @@ static int rx_get(char *c) {
 }
 
 /* --- Colonne de gauche --- */
-
-static void draw_anim(void) {
-  gfx_anim_frame(&anim, frame, (LEFT_W - anim.width) / 2, ANIM_Y);
-}
 
 /* Coupe s pour qu'il tienne dans maxw pixels, en finissant par « .. ». */
 static void fit(char *s, const Font *f, int maxw) {
@@ -311,7 +308,7 @@ void sysmon_init(void) {
     HAL_Delay(250);
   }
   st7789_fill_rect(0, 0, W, H, C_BG);
-  draw_anim();
+  gfx_anim_reset(&anim, ANIM_X, ANIM_Y);
   draw_label();
   draw_waiting();
   next_frame = HAL_GetTick() + anim.duration_ms;
@@ -342,7 +339,7 @@ void sysmon_loop(void) {
   uint32_t now = HAL_GetTick();
   if ((int32_t)(now - next_frame) >= 0) {
     frame = (frame + 1) % anim.frames;
-    draw_anim();
+    gfx_anim_next(&anim, frame, ANIM_X, ANIM_Y);
     next_frame += anim.duration_ms;
     if ((int32_t)(now - next_frame) > 0) next_frame = now + anim.duration_ms; /* retard : on recale */
   }

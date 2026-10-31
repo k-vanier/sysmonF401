@@ -13,14 +13,17 @@ typedef struct {
   const uint8_t *data;
 } Font;
 
-/* Animation : palette RGB565 commune, images stockées colonne par colonne et
- * compressées en RLE (voir mkassets.py). */
+/* Animation : palette RGB565 commune, pixels rangés colonne par colonne, première
+ * image entière (key) puis différences d'une image à l'autre (voir mkassets.py). */
 typedef struct {
   uint16_t width, height, frames, duration_ms;
   const uint16_t *palette;
-  const uint32_t *offset;
-  const uint8_t *rle;
+  const uint8_t *key;
+  const uint32_t *offset; /* offset[i] : début dans delta du passage à l'image i */
+  const uint8_t *delta;
 } Anim;
+
+#define ANIM_PIXELS 15120 /* width * height, pour le tampon de l'image affichée */
 
 /* Caractères spéciaux des polices small et medium (et ° dans large). */
 #define CH_UP     "\x01"

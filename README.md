@@ -69,22 +69,29 @@ Upside-down mounting: `#define FLIP 1` at the top of `sysmon.c`.
 - three anti-aliased fonts (16 alpha levels) rendered from the
   [Go fonts](https://go.dev/blog/go-fonts) (BSD licence), found in the Go module cache
   (`go mod download golang.org/x/image`) or in the folder given by `GOFONTS`;
-- the animation: every frame cropped to the subject (a caption separated by a white band
-  is left out), scaled to 120 px high, one palette of 64 colours for all frames, each frame
-  RLE-compressed. The white background is kept: it matches the white screen.
+- the animation: every frame cropped (`--crop`, or automatically to the subject), scaled
+  to fit 136x120, its near-white background turned pure white to match the screen, one
+  palette of 64 colours for all frames. Pixels are stored column by column (the panel's
+  refresh axis in landscape, so a frame change never shows as a diagonal tear). The first
+  frame is stored whole, then each frame only as its changes from the previous one;
+  colours close to the one already shown are kept, which drops the GIF's compression
+  noise. The firmware keeps the current frame in RAM (`ANIM_PIXELS` bytes) and only
+  sends the parts of columns that change.
 
-To show another GIF (white background works best):
+The current animation is `tools/beastie_trident.gif` (8 s, 120 frames), built with:
 
 ```
 pip install pillow
-python tools/mkassets.py my.gif firmware/sysmonf401
+python tools/mkassets.py --crop 135,12,485,346 --noise 800 tools/beastie_trident.gif firmware/sysmonf401
 ```
 
-then build and flash. The F401CC has 256 KB of flash: with the 16 Beastie frames
-(one in two of the GIF, `ANIM_FRAMES_STEP = 2`) the firmware takes 172 KB. For a longer or
-larger GIF, raise `ANIM_FRAMES_STEP` or lower `ANIM_H` / `ANIM_COLORS` in the script.
+It keeps one frame in two (`--step 2`, 60 frames of 133 ms, 126x120, 142 KB); the
+firmware takes 218 KB of the F401CC's 256 KB of flash. For another GIF (white background
+works best), run the script with its path and look at the sizes it prints; for a longer
+or larger one, raise `--step` or `--noise`, or lower `--max-h` / `--colors`. Then build and
+flash.
 
-The BSD Daemon (Beastie) in `tools/beastie.gif` and in the generated `assets.c` is
+The BSD Daemon (Beastie) in `tools/beastie_trident.gif` and in the generated `assets.c` is
 Copyright 1988 by Marshall Kirk McKusick, all rights reserved; see
 [his page](https://www.mckusick.com/beastie/) for the terms of use.
 
@@ -92,7 +99,8 @@ Copyright 1988 by Marshall Kirk McKusick, all rights reserved; see
 
 `tools/preview` compiles the real `sysmon.c`, `gfx.c` and `assets.c` on a PC with a fake
 display driver, replays a scenario and writes screenshots (PPM, 320x170). It needs a C
-compiler (`gcc`, `clang` or `zig cc`):
+compiler (`gcc`, `clang` or `zig cc`). It also checks that the animation comes back exactly
+to its first frame after a full loop:
 
 ```
 CC="zig cc" sh tools/preview/build.sh /tmp/preview
@@ -125,7 +133,7 @@ P=/c/ST/STM32CubeIDE_2.1.1/STM32CubeIDE/plugins
 O=$(echo $P/com.st.stm32cube.ide.mcu.externaltools.openocd.win32_*/tools/bin/openocd.exe)
 S=$(echo $P/com.st.stm32cube.ide.mcu.debug.openocd_*/resources/openocd/st_scripts)
 "$O" -s "$S" -f interface/stlink-dap.cfg -c "transport select dapdirect_swd" \
-  -f target/stm32f4x.cfg -c "adapter speed 1000" \
+  -f target/stm32f4x.cfg -c "adapter speed 400" \
   -c "program firmware/sysmonf401/Debug/sysmonf401.elf verify reset exit"
 ```
 

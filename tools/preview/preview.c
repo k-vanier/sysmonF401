@@ -12,6 +12,7 @@
 #include "main.h"
 #include "st7789.h"
 #include "sysmon.h"
+#include "assets.h"
 
 static uint16_t fb[ST7789_H][ST7789_W];
 static uint32_t tick;
@@ -83,8 +84,24 @@ static void send(const char *line) {
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : ".";
   sysmon_init();
+
+  /* Boucle de l'animation : après un tour complet, la colonne de gauche doit être
+   * identique (vérifie le codage différentiel, delta[0] compris). */
+  static uint16_t ref[ST7789_H][138];
+  for (int y = 0; y < ST7789_H; y++) memcpy(ref[y], fb[y], sizeof ref[y]);
+  run((uint32_t)anim.frames * anim.duration_ms + anim.duration_ms / 2); /* milieu de l image 0 */
+  int diff = 0;
+  for (int y = 0; y < ST7789_H; y++) diff += memcmp(ref[y], fb[y], sizeof ref[y]) != 0;
+  printf("animation : %d images, boucle %s\n", anim.frames, diff ? "DIFFÉRENTE" : "identique");
+
   run(300);
   shot(dir, "1_attente");
+  for (int i = 0; i < 6; i++) { /* quelques images de l'animation, ~1,3 s d'écart */
+    char name[16];
+    run(1333);
+    snprintf(name, sizeof name, "anim_%d", i);
+    shot(dir, name);
+  }
   char line[160];
   for (int s = 0; s < 70; s++) {
     double k = s / 70.0;
