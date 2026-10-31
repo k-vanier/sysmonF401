@@ -1,0 +1,2 @@
+# Script shell lu par FreeBSD : toujours en LF, même extrait sous Windows.
+freebsd/rc.d/* text eol=lf
