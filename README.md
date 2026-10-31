@@ -64,9 +64,33 @@ Upside-down mounting: `#define FLIP 1` at the top of `sysmon.c`.
    **GND**, **SWDIO** (DIO), **SWCLK** (CLK), and **3V3** only if the board is not
    powered by USB-C at the same time.
 2. In STM32CubeIDE: *File > Import > General > Existing Projects into Workspace*,
-   select `firmware/sysmonf401`, leave "Copy projects into workspace" unticked.
+   select `firmware/sysmonf401` (not the repository root), leave "Copy projects into
+   workspace" unticked.
 3. *Project > Build Project*, then *Run > Run As > STM32 C/C++ Application*
    (debug probe: ST-LINK GDB server, interface SWD). The board resets on the new firmware.
+   Check that the run configuration is "sysmonf401 Debug", not one from another project.
+
+Check on the server that the right firmware runs:
+`usbconfig -d ugen0.2 dump_device_desc | grep -i iProduct` must show `<SysMon F401>`.
+
+#### ST-Link V2 clones
+
+STM32CubeProgrammer (and so CubeIDE's ST-LINK GDB server) may refuse a clone ST-Link V2
+(`0483:3748`, no serial number) with `ST-LINK error (DEV_CONNECT_ERR)`. The OpenOCD
+shipped with CubeIDE works with it, through the `stlink-dap` interface. From Git Bash,
+after a build (close CubeIDE first, the probe serves one tool at a time):
+
+```
+P=/c/ST/STM32CubeIDE_2.1.1/STM32CubeIDE/plugins
+O=$(echo $P/com.st.stm32cube.ide.mcu.externaltools.openocd.win32_*/tools/bin/openocd.exe)
+S=$(echo $P/com.st.stm32cube.ide.mcu.debug.openocd_*/resources/openocd/st_scripts)
+"$O" -s "$S" -f interface/stlink-dap.cfg -c "transport select dapdirect_swd" \
+  -f target/stm32f4x.cfg -c "adapter speed 1000" \
+  -c "program firmware/sysmonf401/Debug/sysmonf401.elf verify reset exit"
+```
+
+It ends with `** Verified OK **` and resets the board. Adjust the CubeIDE path to your
+version. `interface/stlink.cfg` does not work with these scripts, use `stlink-dap.cfg`.
 
 Flashing at `0x08000000` replaces the WeAct HID bootloader the board ships with; this is fine,
 the ST-Link (or the ST ROM bootloader) is enough for later updates.
