@@ -1,12 +1,13 @@
 /* Afficheur CPU / RAM / température / réseau pour serveur FreeBSD.
  *
  * Le PC envoie une ligne de texte par seconde sur le port série USB, ex. :
- *   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 host=srv1
+ *   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
  * down / up en octets par seconde. Une clé absente = mesure indisponible (« -- »).
+ * os = texte sous l'animation, _ pour les espaces (host= est accepté aussi).
  * bri=0 éteint le rétroéclairage, toute autre valeur l'allume (peut être seul sur sa ligne).
  *
- * Écran 320x170 : à gauche une carte blanche avec l'animation (assets.c, généré
- * par tools/mkassets.py) et le nom du serveur ; à droite les jauges et le réseau. */
+ * Écran 320x170 sur fond blanc : à gauche l'animation (assets.c, généré par
+ * tools/mkassets.py) et le système ; à droite les jauges et le réseau. */
 
 #include "sysmon.h"
 #include "gfx.h"
@@ -25,27 +26,24 @@
 #define W ST7789_W
 #define H ST7789_H
 
-/* Thème sombre. */
-#define C_BG        RGB565(10, 12, 18)
-#define C_TRACK     RGB565(34, 39, 52)
-#define C_TEXT      RGB565(236, 238, 245)
-#define C_DIM       RGB565(130, 138, 156)
-#define C_CPU       RGB565(64, 170, 255)
-#define C_RAM       RGB565(180, 110, 255)
-#define C_TEMP      RGB565(255, 160, 40)
-#define C_RED       RGB565(255, 70, 70)
-#define C_GREEN     RGB565(60, 220, 120)
-#define C_DOWN      RGB565(60, 220, 120)
-#define C_UP        RGB565(190, 120, 255)
-#define C_CARD      RGB565(255, 255, 255) /* fond du GIF */
-#define C_CARD_TEXT RGB565(40, 40, 40)
+/* Thème clair : fond blanc, comme celui du GIF. */
+#define C_BG        RGB565(255, 255, 255)
+#define C_TRACK     RGB565(226, 229, 236)
+#define C_TEXT      RGB565(30, 32, 40)
+#define C_DIM       RGB565(118, 124, 138)
+#define C_CPU       RGB565(30, 130, 230)
+#define C_RAM       RGB565(140, 80, 220)
+#define C_TEMP      RGB565(240, 140, 20)
+#define C_RED       RGB565(220, 40, 40)
+#define C_GREEN     RGB565(30, 180, 90)
+#define C_DOWN      RGB565(20, 170, 90)
+#define C_UP        RGB565(150, 90, 230)
+#define C_BSD       RGB565(171, 22, 32) /* rouge du logo FreeBSD */
 
-/* Carte de gauche : animation puis nom du serveur. */
-#define CARD_X 4
-#define CARD_Y 4
-#define CARD_W 130
-#define CARD_H 162
-#define HOST_Y (CARD_Y + CARD_H - 30)
+/* Colonne de gauche : animation puis système et version. */
+#define LEFT_W 138
+#define ANIM_Y 4
+#define LABEL_Y (ANIM_Y + 120 + 2)
 
 /* Colonne de droite. */
 #define RX 144
@@ -63,7 +61,7 @@
 
 typedef struct {
   float cpu, ram, temp, down, up;
-  char host[24];
+  char label[40];
 } Stats;
 
 static Stats st;
@@ -91,42 +89,58 @@ static int rx_get(char *c) {
   return 1;
 }
 
-/* --- Carte et animation --- */
-
-static void draw_card(void) {
-  gfx_round_rect(CARD_X, CARD_Y, CARD_W, CARD_H, 12, C_CARD, C_BG);
-}
+/* --- Colonne de gauche --- */
 
 static void draw_anim(void) {
-  gfx_anim_frame(&anim, frame, CARD_X + (CARD_W - anim.width) / 2, CARD_Y + 6);
+  gfx_anim_frame(&anim, frame, (LEFT_W - anim.width) / 2, ANIM_Y);
 }
 
-/* Pastille d'état puis nom du serveur, centrés sous l'animation. */
-static void draw_host(void) {
-  const char *name = st.host[0] ? st.host : "FreeBSD";
-  char shown[24];
-  strncpy(shown, name, sizeof shown - 1);
-  shown[sizeof shown - 1] = 0;
-  int maxw = CARD_W - 32;
-  if (gfx_text_width(&font_medium, shown) > maxw) { /* trop long : coupé, suivi de « .. » */
-    size_t n = strlen(shown);
-    do {
-      shown[--n] = 0;
-      strcpy(shown + (n > 2 ? n - 2 : 0), "..");
-    } while (n > 2 && gfx_text_width(&font_medium, shown) > maxw);
+/* Coupe s pour qu'il tienne dans maxw pixels, en finissant par « .. ». */
+static void fit(char *s, const Font *f, int maxw) {
+  size_t n = strlen(s);
+  while (n > 2 && gfx_text_width(f, s) > maxw) {
+    s[--n] = 0;
+    strcpy(s + n - 2, "..");
   }
-  int tw = gfx_text_width(&font_medium, shown), dot = 10, gap = 6;
-  int x = CARD_X + (CARD_W - (dot + gap + tw)) / 2;
-  st7789_fill_rect(CARD_X + 8, HOST_Y, CARD_W - 16, font_medium.height, C_CARD);
-  gfx_round_rect(x, HOST_Y + (font_medium.height - dot) / 2, dot, dot, dot / 2,
-                 online ? C_GREEN : C_RED, C_CARD);
-  gfx_text(x + dot + gap, HOST_Y, &font_medium, shown, C_CARD_TEXT, C_CARD);
+}
+
+/* Sous l'animation : pastille d'état et système (« FreeBSD », aux couleurs du
+ * logo), puis la version en plus petit (« 15.0-RELEASE-p9 »). */
+static void draw_label(void) {
+  char l1[24] = "FreeBSD", l2[40] = "";
+  if (st.label[0]) {
+    const char *sp = strchr(st.label, ' ');
+    size_t n = sp ? (size_t)(sp - st.label) : strlen(st.label);
+    if (n >= sizeof l1) n = sizeof l1 - 1;
+    memcpy(l1, st.label, n);
+    l1[n] = 0;
+    if (sp) strncpy(l2, sp + 1, sizeof l2 - 1);
+  }
+  int dot = 10, gap = 6;
+  fit(l1, &font_medium, LEFT_W - 8 - dot - gap);
+  fit(l2, &font_small, LEFT_W - 8);
+
+  st7789_fill_rect(0, LABEL_Y, LEFT_W, font_medium.height + font_small.height, C_BG);
+  int tw = gfx_text_width(&font_medium, l1);
+  int x = (LEFT_W - (dot + gap + tw)) / 2;
+  gfx_round_rect(x, LABEL_Y + (font_medium.height - dot) / 2, dot, dot, dot / 2,
+                 online ? C_GREEN : C_RED, C_BG);
+  x += dot + gap;
+  if (!strcmp(l1, "FreeBSD")) {
+    x = gfx_text(x, LABEL_Y, &font_medium, "Free", C_TEXT, C_BG);
+    gfx_text(x, LABEL_Y, &font_medium, "BSD", C_BSD, C_BG);
+  } else {
+    gfx_text(x, LABEL_Y, &font_medium, l1, C_TEXT, C_BG);
+  }
+  if (l2[0])
+    gfx_text((LEFT_W - gfx_text_width(&font_small, l2)) / 2, LABEL_Y + font_medium.height,
+             &font_small, l2, C_DIM, C_BG);
 }
 
 /* --- Colonne de droite --- */
 
 static void draw_right_bg(void) {
-  st7789_fill_rect(CARD_X + CARD_W, 0, W - CARD_X - CARD_W, H, C_BG);
+  st7789_fill_rect(LEFT_W, 0, W - LEFT_W, H, C_BG);
 }
 
 static void draw_layout(void) {
@@ -199,7 +213,7 @@ static void draw_graph(void) {
     for (int y = 0; y < GH; y++) col[y] = (y == GH - 1) ? C_TRACK : C_BG;
     if (i >= 0) {
       int dh = (int)(hist_down[i] / top * (GH - 2) + 0.5f);
-      for (int y = GH - dh; y < GH; y++) /* plus clair en haut de l'aire, sombre en bas */
+      for (int y = GH - dh; y < GH; y++) /* plus soutenu en haut de l'aire, pâle en bas */
         col[y] = gfx_blend(C_DOWN, C_BG, 150 - 110 * (y - (GH - dh)) / GH);
       if (dh > 0) col[GH - dh] = C_DOWN;
       int uy = GH - 2 - (int)(hist_up[i] / top * (GH - 2) + 0.5f);
@@ -273,15 +287,17 @@ static int parse_line(char *line) {
     else if (!strcmp(k, "temp")) s.temp = strtof(v, NULL);
     else if (!strcmp(k, "down")) s.down = strtof(v, NULL);
     else if (!strcmp(k, "up")) s.up = strtof(v, NULL);
-    else if (!strcmp(k, "host")) {
-      strncpy(s.host, v, sizeof s.host - 1);
-      s.host[sizeof s.host - 1] = 0;
+    else if (!strcmp(k, "os") || (!strcmp(k, "host") && !s.label[0])) {
+      strncpy(s.label, v, sizeof s.label - 1);
+      s.label[sizeof s.label - 1] = 0;
+      for (char *p = s.label; *p; p++)
+        if (*p == '_') *p = ' ';
     }
   }
   if (!measures) return 0;
-  int host_changed = strcmp(s.host, st.host) != 0;
+  int label_changed = strcmp(s.label, st.label) != 0;
   st = s;
-  if (host_changed) draw_host();
+  if (label_changed) draw_label();
   return 1;
 }
 
@@ -295,9 +311,8 @@ void sysmon_init(void) {
     HAL_Delay(250);
   }
   st7789_fill_rect(0, 0, W, H, C_BG);
-  draw_card();
   draw_anim();
-  draw_host();
+  draw_label();
   draw_waiting();
   next_frame = HAL_GetTick() + anim.duration_ms;
 }
@@ -319,7 +334,7 @@ void sysmon_loop(void) {
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin); /* LED bleue : clignote à chaque ligne */
     if (!online) {
       online = 1;
-      draw_host();
+      draw_label();
     }
     draw_stats();
   }
@@ -335,7 +350,7 @@ void sysmon_loop(void) {
   uint32_t idle = now - last_rx;
   if (online && idle > TIMEOUT_MS) {
     online = 0;
-    draw_host();
+    draw_label();
     HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET); /* éteinte */
   }
   if (layout_drawn && !online && idle > WAITING_MS) {

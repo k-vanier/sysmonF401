@@ -2,7 +2,7 @@ package main
 
 // sysmonf401 : envoie une fois par seconde CPU / RAM / température / débit réseau
 // à l'afficheur Black Pill F401 + ST7789, sous forme d'une ligne de texte :
-//   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 host=srv1
+//   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
 // Sort en erreur si l'afficheur disparaît ; rc.d (daemon -r) le relance.
 
 import (
@@ -20,7 +20,7 @@ func main() {
 	interval := flag.Duration("interval", time.Second, "période de mise à jour")
 	bright := flag.Int("brightness", -1, "rétroéclairage au démarrage : 0 = éteint, sinon allumé")
 	iface := flag.String("iface", "", "interfaces réseau à compter, séparées par des virgules (vide = toutes sauf lo)")
-	host := flag.String("host", "", "nom affiché (par défaut : nom court de la machine)")
+	label := flag.String("label", "", "texte affiché sous l'animation (par défaut : système et version, comme uname -sr)")
 	noARC := flag.Bool("no-arc", false, "ne pas compter l'ARC ZFS comme RAM utilisée")
 	flag.Parse()
 
@@ -39,11 +39,11 @@ func main() {
 	}
 	defer f.Close()
 
-	if *host == "" {
-		h, _ := os.Hostname()
-		*host, _, _ = strings.Cut(h, ".")
+	if *label == "" {
+		*label = OSLabel()
 	}
-	*host = strings.ReplaceAll(*host, " ", "_")
+	// L'espace sépare les clés : l'afficheur remet les espaces à la place des _.
+	*label = strings.ReplaceAll(*label, " ", "_")
 	var ifaces []string
 	if *iface != "" {
 		ifaces = strings.Split(*iface, ",")
@@ -91,7 +91,7 @@ func main() {
 			fmt.Fprintf(&b, " down=%.0f up=%.0f", float64(rx-prevRx)/dt, float64(tx-prevTx)/dt)
 		}
 		prevRx, prevTx, netOK, prevT = rx, tx, ok, now
-		fmt.Fprintf(&b, " host=%s", *host)
+		fmt.Fprintf(&b, " os=%s", *label)
 		send(b.String())
 	}
 }

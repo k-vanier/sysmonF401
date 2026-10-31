@@ -88,14 +88,14 @@ int main(int argc, char **argv) {
   char line[160];
   for (int s = 0; s < 70; s++) {
     double k = s / 70.0;
-    snprintf(line, sizeof line, "cpu=%.1f ram=%.1f temp=%.1f down=%.0f up=%.0f host=prodesk\n",
+    snprintf(line, sizeof line, "cpu=%.1f ram=%.1f temp=%.1f down=%.0f up=%.0f os=FreeBSD_15.0-RELEASE-p9\n",
              20 + 60 * k * k, 41.5, 47 + 20 * k, 2e5 + 9e6 * (s % 17) / 17.0 * k, 3e4 + 4e5 * (s % 5) / 5.0);
     send(line);
   }
   shot(dir, "2_mesures");
-  send("cpu=93 ram=88.4 temp=82 down=123456789 up=950 host=un-nom-de-serveur-tres-long\n");
+  send("cpu=93 ram=88.4 temp=82 down=123456789 up=950 os=FreeBSD_16.0-CURRENT-un-tres-long-nom\n");
   shot(dir, "3_alertes");
-  send("cpu=4 host=srv1\n");
+  send("cpu=4 os=FreeBSD_15.0-RELEASE-p9\n");
   shot(dir, "4_partiel");
   run(6000);
   shot(dir, "5_hors_ligne");

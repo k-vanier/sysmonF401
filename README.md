@@ -15,8 +15,9 @@ download / upload rates, sent once a second by the server over USB serial.
 
 *Rendered by the firmware's own drawing code on a PC (`tools/preview`), scaled up ×2.*
 
-- Left: an animated GIF on a white card (FreeBSD's Beastie by default), with the
-  hostname and a status dot (green = data is arriving, red = nothing for 5 s).
+- White background. Left: an animated GIF (FreeBSD's Beastie by default), with the
+  system and its version underneath (`uname -sr`, e.g. FreeBSD 15.0-RELEASE-p9) and a
+  status dot (green = data is arriving, red = nothing for 5 s).
 - Right: CPU, RAM and CPU temperature in large anti-aliased digits with a bar each
   (red above 80 %, or from 75 °C); download / upload rates and their history
   (download as a green area, upload as a violet line, ~70 s).
@@ -70,7 +71,7 @@ Upside-down mounting: `#define FLIP 1` at the top of `sysmon.c`.
   (`go mod download golang.org/x/image`) or in the folder given by `GOFONTS`;
 - the animation: every frame cropped to the subject (a caption separated by a white band
   is left out), scaled to 120 px high, one palette of 64 colours for all frames, each frame
-  RLE-compressed. The white background is kept and shown on a white card.
+  RLE-compressed. The white background is kept: it matches the white screen.
 
 To show another GIF (white background works best):
 
@@ -174,7 +175,7 @@ Options:
 | `-port /dev/cuaU0` | automatic | Serial port; found by VID/PID `0483:5740` if empty (`cuaU0` alone also works) |
 | `-interval 1s` | `1s` | Update period |
 | `-iface em0,igb1` | all but `lo*` | Interfaces counted for the network rates |
-| `-host name` | short hostname | Name shown in the header |
+| `-label text` | `uname -sr` | Text shown under the animation, e.g. `FreeBSD 15.0-RELEASE-p9`: first word on the first line, the rest underneath |
 | `-brightness N` | unchanged | Backlight: 0 = off, anything else = on |
 | `-no-arc` | off | Do not count the ZFS ARC as used RAM |
 
@@ -202,7 +203,7 @@ When the data stops, the dot turns red after 5 s, and the screen goes back to
 One text line per sample, `key=value` pairs separated by spaces, ending with `\n`:
 
 ```
-cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 host=srv1
+cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
 ```
 
 | Key | Value |
@@ -210,11 +211,11 @@ cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 host=srv1
 | `cpu`, `ram` | Percent used |
 | `temp` | CPU temperature, °C |
 | `down`, `up` | Network rates, bytes per second |
-| `host` | Name shown in the header (no spaces) |
+| `os` | Text under the animation, `_` for spaces (`host` is accepted too) |
 | `bri` | Backlight: 0 = off, anything else = on; can be sent alone |
 
 A missing key shows `--`. So the board can be fed by anything, for example from a shell:
-`echo "cpu=50 ram=20 host=test" > /dev/cuaU0`.
+`echo "cpu=50 ram=20 os=FreeBSD_test" > /dev/cuaU0`.
 
 Sources: `kern.cp_time` (CPU), `hw.physmem` and `vm.stats.vm.*` (RAM, available = free +
 inactive + laundry pages, as in `top`), `dev.cpu.N.temperature` (hottest core),

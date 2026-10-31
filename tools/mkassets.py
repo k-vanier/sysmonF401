@@ -10,7 +10,7 @@ rendu dans une cellule de sa largeur d'avance, alpha sur 4 bits.
 
 Animation : chaque image est recadrée sur le sujet (union des zones non blanches
 de toutes les images, légende séparée exclue) et réduite à ANIM_H de haut. Le fond
-blanc est gardé : le firmware affiche l'animation sur une carte blanche. Toutes
+blanc est gardé : l'écran du firmware est sur fond blanc. Toutes
 les images partagent une palette ; chaque image est compressée en RLE :
   octet n < 0x80 : n+1 pixels de l'indice qui suit
   octet n >= 0x80 : (n & 0x7F)+1 indices littéraux qui suivent
