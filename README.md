@@ -23,17 +23,19 @@ download / upload rates, sent once a second by the server over USB serial.
   download above the axis, upload below, each with its own scale.
 - When the server sends the summary of [c411_transmission](https://github.com/k-vanier/c411_transmission)
   (`/var/log/torrents_status`), the right column switches every 10 s between that system
-  page and a torrents page:
-  - **DL**: downloads / slots (`2/3`), one bar segment per slot: pink filled to each
-    download's progress, violet for an added `.torrent` still waiting (`+1 att`), and
-    torrents in error in red (`2 err`);
-  - **ratio**: global ratio, with the totals sent ↑ and received ↓ since ever; the bar shows
-    sent (violet) against received (pink);
-  - **LIBRE**: free space; the bar is the part still available for new additions (all red
-    when space is missing);
-  - the best and worst finished torrents (▲ green, ▼ red, ratio and name), then what the
-    last run did (`DL complet`, `RAS`...) and `dispo` / `manque` on the right. A summary
-    older than an hour shows its age in orange; c411's error line shows as such.
+  page and a torrents page made of cards:
+  - **DL**: downloads / slots (`2/3`) and added `.torrent` files still waiting (`+1 att`);
+    one pill per slot, pink filled to each download's progress, violet for a waiting one;
+  - **RATIO**: global ratio, green from 1, orange below; the bar shows sent (violet)
+    against received (pink) since ever;
+  - **disk**: `dispo 29G` on the left, `87G libre` on the right; the whole bar is the free
+    space, the green part what is left for new additions, the pale pink part what is
+    already promised (downloads in progress, c411's minimum free space); all red with
+    `manque` when space is missing;
+  - the best and worst finished torrents (▲ green, ▼ red, ratio and name), then torrents
+    in error (red), what the last run did (`DL complet`, `RAS`...) and the totals sent ↑ /
+    received ↓ since ever. A summary older than an hour shows its age in orange; c411's
+    error line shows as a pale red card.
   The torrents page is left out when no summary arrived for 30 s (file missing).
 
 ## Wiring

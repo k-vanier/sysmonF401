@@ -337,116 +337,167 @@ static void fmt_age(char *out, size_t n, long s) {
   else snprintf(out, n, "%ld j", s / 86400);
 }
 
-/* Places de téléchargement : un segment par place, rose rempli selon l'avancement
- * pour un téléchargement, violet pour un ajout en attente, vide sinon. */
-static void draw_slots(int row) {
+/* La page torrents est faite de cartes : rectangles arrondis gris très clair. */
+#define C_PANEL RGB565(243, 244, 248)
+#define C_RESERVED RGB565(246, 196, 222) /* rose pâle : place déjà promise */
+#define PAD 6
+#define TOP_Y 2      /* cartes DL et ratio */
+#define TOP_H 60
+#define DL_W 76
+#define DISK_Y 66    /* carte disque */
+#define DISK_H 38
+#define RANK_Y 107   /* top, flop, puis l'action */
+#define TITLE_DY 3   /* titre d'une carte, puis grand nombre, puis barre */
+#define BIG_DY 20
+
+static void panel(int x, int y, int w, int h, uint16_t color) {
+  gfx_round_rect(x, y, w, h, 8, color, C_BG);
+}
+
+/* Texte de la police f dont la ligne de base est en `base`. */
+static int text_at_base(int x, int base, const Font *f, const char *s, uint16_t fg, uint16_t bg) {
+  return gfx_text(x, base - f->ascent, f, s, fg, bg);
+}
+
+/* Remplace les _ par des espaces. */
+static void spaces(char *s) {
+  for (; *s; s++)
+    if (*s == '_') *s = ' ';
+}
+
+/* Carte DL : titre et ajouts en attente, « 2/3 » en grand, une pastille par place
+ * (rose remplie selon l'avancement, violette pour un ajout en attente). */
+static void draw_dl_card(int x, int y, int w, int h) {
+  char buf[16];
+  panel(x, y, w, h, C_PANEL);
+  int base = y + TITLE_DY + font_small.ascent;
+  int tx = text_at_base(x + PAD, base, &font_small, "DL", C_DIM, C_PANEL);
+  if (tor.att) {
+    snprintf(buf, sizeof buf, " +%d att", tor.att);
+    text_at_base(tx, base, &font_small, buf, C_UP, C_PANEL);
+  }
+  if (tor.max > 0) snprintf(buf, sizeof buf, "%d/%d", tor.dl, tor.max);
+  else snprintf(buf, sizeof buf, "%d", tor.dl);
+  gfx_text(x + PAD, y + BIG_DY, &font_large, buf, C_TEXT, C_PANEL);
+
   int n = tor.max > 0 ? tor.max : tor.dl + tor.att;
   if (n < 1) n = 1;
   if (n > 8) n = 8;
-  int gap = 4, sw = (RW - gap * (n - 1)) / n;
+  int gap = 3, inner = w - 2 * PAD, sw = (inner - gap * (n - 1)) / n;
   for (int i = 0; i < n; i++) {
-    int x = RX + i * (sw + gap), fill = 0;
+    int fill = 0;
     uint16_t color = C_DOWN;
     if (i < tor.dl) fill = i < tor.npct ? sw * tor.pct[i] / 100 : sw;
     else if (i < tor.dl + tor.att) fill = sw, color = C_UP;
-    gfx_bar(x, BAR_Y(row), sw, BAR_H, fill, color, C_TRACK, C_BG);
+    gfx_bar(x + PAD + i * (sw + gap), y + h - PAD - BAR_H, sw, BAR_H, fill, color, C_TRACK, C_PANEL);
   }
-  int used = RX + n * sw + (n - 1) * gap; /* arrondi de la division : reste effacé */
-  st7789_fill_rect(used, BAR_Y(row), RX + RW - used, BAR_H, C_BG);
 }
 
-/* Ligne du bas : triangle et ratio en couleur, puis le nom en petit. */
+/* Carte ratio : en grand (vert à partir de 1, orange en dessous) ; la barre montre
+ * l'envoyé (violet) face au reçu (rose) depuis toujours. */
+static void draw_ratio_card(int x, int y, int w, int h) {
+  panel(x, y, w, h, C_PANEL);
+  text_at_base(x + PAD, y + TITLE_DY + font_small.ascent, &font_small, "RATIO", C_DIM, C_PANEL);
+  const char *r = tor.ratio[0] ? tor.ratio : "-";
+  uint16_t fg = C_DIM;
+  if (!strcmp(r, "inf")) fg = C_OK;
+  else if (r[0] != '-' && r[0] != '?') fg = strtof(r, NULL) >= 1 ? C_OK : C_TEMP;
+  gfx_text(x + PAD, y + BIG_DY, &font_large, r, fg, C_PANEL);
+  float up = size_gb(tor.up), down = size_gb(tor.down), sum = up + down;
+  int bw = w - 2 * PAD, fill = sum > 0 ? (int)(bw * up / sum + 0.5f) : 0;
+  gfx_bar(x + PAD, y + h - PAD - BAR_H, bw, BAR_H, fill, C_UP, sum > 0 ? C_DOWN : C_TRACK, C_PANEL);
+}
+
+/* Carte disque : « dispo 29G » à gauche, « 87G libre » à droite ; la barre entière
+ * est le libre, la part verte ce qui reste pour des ajouts, le rose pâle ce qui est
+ * déjà promis (téléchargements en cours, marge minimale). En cas de manque : rouge. */
+static void draw_disk_card(int x, int y, int w, int h) {
+  panel(x, y, w, h, C_PANEL);
+  int base = y + 4 + font_medium.ascent;
+  const char *v = tor.need[0] ? tor.need : tor.avail[0] ? tor.avail : "?";
+  const char *fr_txt = tor.free[0] ? tor.free : "?";
+  int tx = text_at_base(x + PAD, base, &font_small, tor.need[0] ? "manque " : "dispo ", C_DIM, C_PANEL);
+  tx = text_at_base(tx, base, &font_medium, v, tor.need[0] ? C_RED : C_OK, C_PANEL);
+  int lw = gfx_text_width(&font_small, " libre"), vw = gfx_text_width(&font_medium, fr_txt);
+  if (x + w - PAD - lw - vw < tx + 8) lw = 0; /* pas la place : le mot « libre » saute */
+  int rx = text_at_base(x + w - PAD - lw - vw, base, &font_medium, fr_txt, C_TEXT, C_PANEL);
+  if (lw) text_at_base(rx, base, &font_small, " libre", C_DIM, C_PANEL);
+
+  int bw = w - 2 * PAD, by = y + h - 5 - 8;
+  float fr = size_gb(tor.free), av = size_gb(tor.avail);
+  if (tor.need[0]) gfx_bar(x + PAD, by, bw, 8, bw, C_RED, C_TRACK, C_PANEL);
+  else if (fr > 0 && !isnan(av)) gfx_bar(x + PAD, by, bw, 8, (int)(bw * av / fr + 0.5f), C_OK, C_RESERVED, C_PANEL);
+  else gfx_bar(x + PAD, by, bw, 8, 0, C_OK, C_TRACK, C_PANEL);
+}
+
+/* Ligne top / flop : triangle et ratio en couleur, puis le nom. */
 static void draw_rank(int y, const char *tri, const char *ratio, const char *name, uint16_t color) {
   char n[24];
-  st7789_fill_rect(RX, y, RW, font_medium.height, C_BG);
   if (!ratio[0]) return;
-  int x = gfx_text(RX, y, &font_medium, tri, color, C_BG);
-  x = gfx_text(x, y, &font_medium, " ", color, C_BG);
-  x = gfx_text(x, y, &font_medium, ratio, color, C_BG);
-  strcpy(n, name);
-  for (char *p = n; *p; p++)
-    if (*p == '_') *p = ' ';
-  fit(n, &font_small, RX + RW - x - 6);
-  text_small_on(x + 6, y, &font_medium, n, C_TEXT);
+  int base = y + font_medium.ascent;
+  int x = text_at_base(RX + 2, base, &font_medium, tri, color, C_BG);
+  x = text_at_base(x, base, &font_medium, " ", color, C_BG);
+  x = text_at_base(x, base, &font_medium, ratio, color, C_BG);
+  copy(n, sizeof n, name);
+  spaces(n);
+  fit(n, &font_small, RX + RW - x - 8);
+  text_at_base(x + 8, base, &font_small, n, C_TEXT, C_BG);
 }
 
 static void draw_torrent_page(void) {
-  char buf[24], age[12];
+  char buf[48], age[12];
   long since = tor.age + (long)((HAL_GetTick() - tor_rx) / 1000);
   fmt_age(age, sizeof age, since);
 
-  if (tor.error[0]) { /* c411 n'a pas pu joindre Transmission */
-    char msg[48];
-    strcpy(msg, tor.error);
-    for (char *p = msg; *p; p++)
-      if (*p == '_') *p = ' ';
-    fit(msg, &font_small, RW);
-    gfx_text(RX, ROW_Y(0), &font_medium, "Torrents : ERREUR", C_RED, C_BG);
-    gfx_text(RX, ROW_Y(0) + font_medium.height + 4, &font_small, msg, C_TEXT, C_BG);
-    snprintf(buf, sizeof buf, "libre %s", tor.free);
-    gfx_text(RX, ROW_Y(2), &font_medium, buf, C_TEXT, C_BG);
-    gfx_text(RX, LOW_Y + 40, &font_small, age, C_DIM, C_BG);
+  if (tor.error[0]) { /* c411 n'a pas pu joindre Transmission : une carte rouge pâle */
+    uint16_t bg = RGB565(253, 236, 236);
+    panel(RX, TOP_Y, RW, H - 2 * TOP_Y, bg);
+    text_at_base(RX + PAD, TOP_Y + 6 + font_small.ascent, &font_small, "TORRENTS", C_DIM, bg);
+    gfx_text(RX + PAD, TOP_Y + 26, &font_medium, "Erreur", C_RED, bg);
+    copy(buf, sizeof buf, tor.error);
+    spaces(buf);
+    fit(buf, &font_small, RW - 2 * PAD);
+    gfx_text(RX + PAD, TOP_Y + 50, &font_small, buf, C_TEXT, bg);
+    int fx = gfx_text(RX + PAD, TOP_Y + 84, &font_large, tor.free[0] ? tor.free : "?", C_TEXT, bg);
+    text_at_base(fx, TOP_Y + 84 + font_large.ascent, &font_small, " libre", C_DIM, bg);
+    snprintf(buf, sizeof buf, "il y a %s", age);
+    gfx_text(RX + PAD, H - TOP_Y - 8 - font_small.height, &font_small, buf, C_DIM, bg);
     return;
   }
 
-  /* Téléchargements : « 2/3 », ajouts en attente à côté du libellé. */
-  char att[16] = "";
-  if (tor.att) snprintf(att, sizeof att, "+%d att", tor.att);
-  if (tor.max > 0) snprintf(buf, sizeof buf, "%d/%d", tor.dl, tor.max);
-  else snprintf(buf, sizeof buf, "%d", tor.dl);
-  int vx = draw_row_value(0, buf, C_TEXT, 0);
-  draw_row_label(0, "DL", att, C_UP, vx);
-  if (tor.err) { /* torrents en erreur : en rouge, après les ajouts en attente */
-    char err[12];
-    snprintf(err, sizeof err, "%d err", tor.err);
-    int ex = RX + gfx_text_width(&font_small, "DL ");
-    if (att[0]) ex += gfx_text_width(&font_small, att) + gfx_text_width(&font_small, " ");
-    if (ex + gfx_text_width(&font_small, err) < vx - 6)
-      text_small_on(ex, ROW_Y(0), &font_large, err, C_RED);
-  }
-  draw_slots(0);
-
-  /* Ratio global, avec à sa gauche les totaux envoyé / reçu depuis toujours ; la barre
-   * montre la part envoyée (violet) face à la part reçue (rose). */
-  draw_row_value(1, tor.ratio[0] ? tor.ratio : "-", C_TEXT, 0);
-  int x = text_small_on(RX, ROW_Y(1), &font_large, CH_UP, C_UP);
-  x = text_small_on(x, ROW_Y(1), &font_large, tor.up, C_DIM);
-  x = text_small_on(x, ROW_Y(1), &font_large, "  ", C_DIM);
-  x = text_small_on(x, ROW_Y(1), &font_large, CH_DOWN, C_DOWN);
-  text_small_on(x, ROW_Y(1), &font_large, tor.down, C_DIM);
-  float up = size_gb(tor.up), down = size_gb(tor.down);
-  draw_row_bar(1, up + down > 0 ? up / (up + down) : NAN, C_UP, up + down > 0 ? C_DOWN : C_TRACK);
-
-  /* Espace : libre sur le disque ; la barre, la part encore disponible pour des ajouts
-   * (toute rouge s'il en manque), chiffrée sur la dernière ligne. */
-  draw_row_value(2, tor.free[0] ? tor.free : "?", C_TEXT, 0);
-  draw_row_label(2, "LIBRE", NULL, 0, 0);
-  float fr = size_gb(tor.free), av = size_gb(tor.avail);
-  if (tor.need[0]) draw_row_bar(2, 1, C_RED, C_TRACK);
-  else draw_row_bar(2, fr > 0 ? av / fr : NAN, C_OK, C_TRACK);
+  draw_dl_card(RX, TOP_Y, DL_W, TOP_H);
+  draw_ratio_card(RX + DL_W + 6, TOP_Y, RW - DL_W - 6, TOP_H);
+  draw_disk_card(RX, DISK_Y, RW, DISK_H);
 
   /* Torrents terminés le plus et le moins rentables. */
-  draw_rank(LOW_Y, CH_TRI_UP, tor.topr, tor.topn, C_OK);
-  draw_rank(LOW_Y + font_medium.height + 1, CH_TRI_DOWN, tor.flopr, tor.flopn, C_RED);
+  draw_rank(RANK_Y, CH_TRI_UP, tor.topr, tor.topn, C_OK);
+  draw_rank(RANK_Y + font_medium.height, CH_TRI_DOWN, tor.flopr, tor.flopn, C_RED);
 
-  /* Dernière ligne : ce que le dernier passage a fait (ou son âge s'il est ancien),
-   * place disponible ou manquante à droite. */
-  int y = H - 3 - font_small.height;
-  char act[64];
-  snprintf(act, sizeof act, "%s", tor.act);
-  for (char *p = act; *p; p++)
-    if (*p == '_') *p = ' ';
-  if (since > 3600) snprintf(act, sizeof act, "il y a %s", age); /* résumé ancien : c411 ne tourne plus ? */
-  int right = RX + RW;
-  if (tor.need[0] || tor.avail[0]) {
-    if (tor.need[0]) snprintf(buf, sizeof buf, "manque %s", tor.need);
-    else snprintf(buf, sizeof buf, "dispo %s", tor.avail);
-    right -= gfx_text_width(&font_small, buf);
-    gfx_text(right, y, &font_small, buf, tor.need[0] ? C_RED : C_OK, C_BG);
-    right -= 8;
+  /* Dernière ligne : torrents en erreur et ce que le dernier passage a fait (ou son
+   * âge s'il est ancien : c411 ne tourne plus ?) ; à droite, les totaux envoyé / reçu
+   * depuis toujours. */
+  int y = H - 1 - font_small.height;
+  int tw = gfx_text_width(&font_small, CH_UP) + gfx_text_width(&font_small, tor.up) +
+           gfx_text_width(&font_small, " ") + gfx_text_width(&font_small, CH_DOWN) +
+           gfx_text_width(&font_small, tor.down);
+  int x = RX + RW - tw;
+  x = gfx_text(x, y, &font_small, CH_UP, C_UP, C_BG);
+  x = gfx_text(x, y, &font_small, tor.up, C_TEXT, C_BG);
+  x = gfx_text(x, y, &font_small, " ", C_TEXT, C_BG);
+  x = gfx_text(x, y, &font_small, CH_DOWN, C_DOWN, C_BG);
+  gfx_text(x, y, &font_small, tor.down, C_TEXT, C_BG);
+
+  int lx = RX, right = RX + RW - tw - 5;
+  if (tor.err) {
+    snprintf(buf, sizeof buf, "%d err ", tor.err);
+    lx = gfx_text(lx, y, &font_small, buf, C_RED, C_BG);
   }
-  fit(act, &font_small, right - RX);
-  gfx_text(RX, y, &font_small, act, since > 3600 ? C_TEMP : C_DIM, C_BG);
+  char act[64];
+  copy(act, sizeof act, tor.act);
+  spaces(act);
+  if (since > 3600) snprintf(act, sizeof act, "il y a %s", age);
+  fit(act, &font_small, right - lx);
+  gfx_text(lx, y, &font_small, act, since > 3600 ? C_TEMP : C_DIM, C_BG);
 }
 
 /* --- Pages --- */
