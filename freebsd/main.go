@@ -18,7 +18,7 @@ import (
 func main() {
 	port := flag.String("port", "", "port série (ex. /dev/cuaU0) ; détecté automatiquement si vide")
 	interval := flag.Duration("interval", time.Second, "période de mise à jour")
-	bright := flag.Int("brightness", -1, "rétroéclairage 0-100 à appliquer au démarrage")
+	bright := flag.Int("brightness", -1, "rétroéclairage au démarrage : 0 = éteint, sinon allumé")
 	iface := flag.String("iface", "", "interfaces réseau à compter, séparées par des virgules (vide = toutes sauf lo)")
 	host := flag.String("host", "", "nom affiché (par défaut : nom court de la machine)")
 	noARC := flag.Bool("no-arc", false, "ne pas compter l'ARC ZFS comme RAM utilisée")
