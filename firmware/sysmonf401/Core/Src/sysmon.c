@@ -3,9 +3,13 @@
  * Le PC envoie une ligne de texte par seconde sur le port série USB, ex. :
  *   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 host=srv1
  * down / up en octets par seconde. Une clé absente = mesure indisponible (« -- »).
- * bri=0 éteint le rétroéclairage, toute autre valeur l'allume (peut être seul sur sa ligne). */
+ * bri=0 éteint le rétroéclairage, toute autre valeur l'allume (peut être seul sur sa ligne).
+ *
+ * Écran 320x170 : à gauche une carte blanche avec l'animation (assets.c, généré
+ * par tools/mkassets.py) et le nom du serveur ; à droite les jauges et le réseau. */
 
 #include "sysmon.h"
+#include "gfx.h"
 #include "st7789.h"
 #include "main.h"
 
@@ -15,7 +19,7 @@
 #include <string.h>
 
 #define FLIP 0             /* 1 = écran monté à l'envers */
-#define TIMEOUT_MS 5000    /* au-delà sans données : point rouge */
+#define TIMEOUT_MS 5000    /* au-delà sans données : pastille rouge */
 #define WAITING_MS 60000   /* au-delà : retour à l'écran d'attente */
 
 #define W ST7789_W
@@ -23,16 +27,39 @@
 
 /* Thème sombre. */
 #define C_BG        RGB565(10, 12, 18)
-#define C_PANEL     RGB565(40, 46, 60)
-#define C_TEXT      RGB565(230, 232, 240)
-#define C_DIM       RGB565(120, 128, 145)
+#define C_TRACK     RGB565(34, 39, 52)
+#define C_TEXT      RGB565(236, 238, 245)
+#define C_DIM       RGB565(130, 138, 156)
 #define C_CPU       RGB565(64, 170, 255)
 #define C_RAM       RGB565(180, 110, 255)
 #define C_TEMP      RGB565(255, 160, 40)
-#define C_RED       RGB565(255, 60, 60)
+#define C_RED       RGB565(255, 70, 70)
+#define C_GREEN     RGB565(60, 220, 120)
 #define C_DOWN      RGB565(60, 220, 120)
-#define C_DOWN_FILL RGB565(20, 90, 50)
 #define C_UP        RGB565(190, 120, 255)
+#define C_CARD      RGB565(255, 255, 255) /* fond du GIF */
+#define C_CARD_TEXT RGB565(40, 40, 40)
+
+/* Carte de gauche : animation puis nom du serveur. */
+#define CARD_X 4
+#define CARD_Y 4
+#define CARD_W 130
+#define CARD_H 162
+#define HOST_Y (CARD_Y + CARD_H - 30)
+
+/* Colonne de droite. */
+#define RX 144
+#define RW (W - 4 - RX)
+#define ROW_H 36
+#define ROW_Y0 4
+#define BAR_H 6
+
+/* Réseau : deux lignes de texte, graphe à droite. */
+#define NET_Y 116
+#define GW 70
+#define GH 46
+#define GX (W - 4 - GW)
+#define GY (H - 4 - GH)
 
 typedef struct {
   float cpu, ram, temp, down, up;
@@ -40,8 +67,8 @@ typedef struct {
 } Stats;
 
 static Stats st;
-static uint32_t last_rx;
-static int online, layout_drawn;
+static uint32_t last_rx, next_frame;
+static int online, layout_drawn, frame;
 
 /* --- Réception : tampon circulaire rempli sous interruption USB --- */
 
@@ -64,78 +91,66 @@ static int rx_get(char *c) {
   return 1;
 }
 
-/* --- Mise en page --- */
+/* --- Carte et animation --- */
 
-#define BAR_X 50
-#define BAR_W 190
-#define BAR_H 18
-#define ROW_CPU 30
-#define ROW_RAM 54
-#define ROW_TEMP 78
-
-/* Graphe réseau : un point par ligne reçue, les plus récents à droite. */
-#define GX 158
-#define GY 104
-#define GW 158
-#define GH 62
-static float hist_down[GW], hist_up[GW];
-static int hist_len;
-
-/* Texte taille 2 aligné à droite sur `right`, sur fond plein : écrase l'ancienne valeur. */
-static void text_right(int right, int y, const char *s, uint16_t fg, int width) {
-  int tw = strlen(s) * 12;
-  st7789_fill_rect(right - width, y, width - tw, 16, C_BG);
-  st7789_text(right - tw, y, s, 2, fg, C_BG);
+static void draw_card(void) {
+  gfx_round_rect(CARD_X, CARD_Y, CARD_W, CARD_H, 12, C_CARD, C_BG);
 }
 
-static void draw_header(void) {
-  st7789_fill_rect(0, 0, W, 22, C_PANEL);
-  st7789_text(6, 3, st.host[0] ? st.host : "FreeBSD", 2, C_TEXT, C_PANEL);
+static void draw_anim(void) {
+  gfx_anim_frame(&anim, frame, CARD_X + (CARD_W - anim.width) / 2, CARD_Y + 6);
 }
 
-/* Pastille d'état en haut à droite : carré arrondi vert ou rouge. */
-static void draw_status(void) {
-  uint16_t c = online ? C_DOWN : C_RED;
-  st7789_fill_rect(W - 16, 7, 8, 8, c);
-  st7789_fill_rect(W - 17, 8, 10, 6, c);
-  st7789_fill_rect(W - 15, 6, 6, 10, c);
+/* Pastille d'état puis nom du serveur, centrés sous l'animation. */
+static void draw_host(void) {
+  const char *name = st.host[0] ? st.host : "FreeBSD";
+  char shown[24];
+  strncpy(shown, name, sizeof shown - 1);
+  shown[sizeof shown - 1] = 0;
+  int maxw = CARD_W - 32;
+  if (gfx_text_width(&font_medium, shown) > maxw) { /* trop long : coupé, suivi de « .. » */
+    size_t n = strlen(shown);
+    do {
+      shown[--n] = 0;
+      strcpy(shown + (n > 2 ? n - 2 : 0), "..");
+    } while (n > 2 && gfx_text_width(&font_medium, shown) > maxw);
+  }
+  int tw = gfx_text_width(&font_medium, shown), dot = 10, gap = 6;
+  int x = CARD_X + (CARD_W - (dot + gap + tw)) / 2;
+  st7789_fill_rect(CARD_X + 8, HOST_Y, CARD_W - 16, font_medium.height, C_CARD);
+  gfx_round_rect(x, HOST_Y + (font_medium.height - dot) / 2, dot, dot, dot / 2,
+                 online ? C_GREEN : C_RED, C_CARD);
+  gfx_text(x + dot + gap, HOST_Y, &font_medium, shown, C_CARD_TEXT, C_CARD);
 }
 
-static void draw_frame(int x, int y, int w, int h, uint16_t c) {
-  st7789_fill_rect(x, y, w, 1, c);
-  st7789_fill_rect(x, y + h - 1, w, 1, c);
-  st7789_fill_rect(x, y, 1, h, c);
-  st7789_fill_rect(x + w - 1, y, 1, h, c);
+/* --- Colonne de droite --- */
+
+static void draw_right_bg(void) {
+  st7789_fill_rect(CARD_X + CARD_W, 0, W - CARD_X - CARD_W, H, C_BG);
 }
 
 static void draw_layout(void) {
-  static const char *labels[] = {"CPU", "RAM", "TMP"};
-  static const int rows[] = {ROW_CPU, ROW_RAM, ROW_TEMP};
-  st7789_fill_rect(0, 0, W, H, C_BG);
-  draw_header();
-  draw_status();
+  static const char *labels[] = {"CPU", "RAM", "TEMP"};
+  draw_right_bg();
   for (int i = 0; i < 3; i++) {
-    st7789_text(6, rows[i] + 1, labels[i], 2, C_DIM, C_BG);
-    draw_frame(BAR_X, rows[i], BAR_W, BAR_H, C_PANEL);
+    int y = ROW_Y0 + i * ROW_H;
+    gfx_text(RX, y + font_large.ascent - font_small.ascent, &font_small, labels[i], C_DIM, C_BG);
   }
-  st7789_fill_rect(0, 100, W, 1, C_PANEL);
-  draw_frame(GX - 1, GY - 1, GW + 2, GH + 2, C_PANEL);
-  st7789_text(6, 110, CH_DOWN, 2, C_DOWN, C_BG);
-  st7789_text(6, 140, CH_UP, 2, C_UP, C_BG);
+  gfx_text(RX, NET_Y, &font_medium, CH_DOWN, C_DOWN, C_BG);
+  gfx_text(RX, NET_Y + 24, &font_medium, CH_UP, C_UP, C_BG);
   layout_drawn = 1;
 }
 
-/* Barre + valeur. pct dans 0..100, NAN = indisponible. */
-static void draw_gauge(int y, float pct, uint16_t color, const char *text) {
-  int inner = BAR_W - 4;
+/* Valeur en grands chiffres alignée à droite + barre. pct dans 0..100, NAN = indisponible. */
+static void draw_gauge(int row, float pct, uint16_t color, const char *text) {
+  int y = ROW_Y0 + row * ROW_H;
+  gfx_text_right(W - 4, y, &font_large, text, isnan(pct) ? C_DIM : C_TEXT, C_BG, RW - 50);
   int fill = 0;
   if (!isnan(pct)) {
     float p = pct < 0 ? 0 : pct > 100 ? 100 : pct;
-    fill = (int)(p * inner / 100 + 0.5f);
+    fill = (int)(p * RW / 100 + 0.5f);
   }
-  st7789_fill_rect(BAR_X + 2, y + 2, fill, BAR_H - 4, color);
-  st7789_fill_rect(BAR_X + 2 + fill, y + 2, inner - fill, BAR_H - 4, C_BG);
-  text_right(W - 4, y + 1, text, isnan(pct) ? C_DIM : C_TEXT, 72);
+  gfx_bar(RX, y + font_large.height + 2, RW, BAR_H, fill, color, C_TRACK, C_BG);
 }
 
 static uint16_t alert(uint16_t c, float v, float limit) { return v >= limit ? C_RED : c; }
@@ -146,26 +161,29 @@ static void fmt_int(char *out, size_t n, float v, const char *unit) {
   else snprintf(out, n, "%d%s", (int)(v + 0.5f), unit);
 }
 
-/* Débit en octets/s, au plus 10 caractères : « 123.4 Ko/s ». Sans %f (newlib-nano). */
+/* Débit en octets/s : « 820 Ko/s », « 12.3 Mo/s ». Sans %f (newlib-nano). */
 static void fmt_rate(char *out, size_t n, float b) {
-  static const char *units[] = {"Ko/s", "Mo/s", "Go/s"};
+  static const char *units[] = {"o/s", "Ko/s", "Mo/s", "Go/s"};
   if (isnan(b)) {
-    snprintf(out, n, "   -- o/s");
-    return;
-  }
-  if (b < 1024) {
-    snprintf(out, n, "%5u  o/s", (unsigned)(b + 0.5f));
+    snprintf(out, n, "--");
     return;
   }
   int u = 0;
-  b /= 1024;
-  while (b >= 1024 && u < 2) {
+  while (b >= 1000 && u < 3) {
     b /= 1024;
     u++;
   }
-  unsigned t = (unsigned)(b * 10 + 0.5f); /* dixièmes */
-  snprintf(out, n, "%3u.%u %s", t / 10, t % 10, units[u]);
+  if (b < 10 && u > 0) {
+    unsigned t = (unsigned)(b * 10 + 0.5f); /* dixièmes */
+    snprintf(out, n, "%u.%u %s", t / 10, t % 10, units[u]);
+  } else {
+    snprintf(out, n, "%u %s", (unsigned)(b + 0.5f), units[u]);
+  }
 }
+
+/* Historique réseau : un point par ligne reçue, les plus récents à droite. */
+static float hist_down[GW], hist_up[GW];
+static int hist_len;
 
 static void draw_graph(void) {
   static uint16_t col[GH];
@@ -174,17 +192,17 @@ static void draw_graph(void) {
     if (hist_down[i] > top) top = hist_down[i];
     if (hist_up[i] > top) top = hist_up[i];
   }
-  /* Colonne par colonne, sans effacement préalable : pas de clignotement.
-   * Réception = aire verte, envoi = ligne violette reliant les points. */
+  /* Colonne par colonne : fond, aire de réception en dégradé, ligne d'envoi. */
   int off = GW - hist_len, prev_uy = -1;
   for (int x = 0; x < GW; x++) {
     int i = x - off;
-    for (int y = 0; y < GH; y++) col[y] = C_BG;
+    for (int y = 0; y < GH; y++) col[y] = (y == GH - 1) ? C_TRACK : C_BG;
     if (i >= 0) {
-      int dh = (int)(hist_down[i] / top * (GH - 1) + 0.5f);
-      for (int y = GH - dh; y < GH; y++) col[y] = C_DOWN_FILL;
-      col[GH - (dh > 0 ? dh : 1)] = C_DOWN;
-      int uy = GH - 1 - (int)(hist_up[i] / top * (GH - 1) + 0.5f);
+      int dh = (int)(hist_down[i] / top * (GH - 2) + 0.5f);
+      for (int y = GH - dh; y < GH; y++) /* plus clair en haut de l'aire, sombre en bas */
+        col[y] = gfx_blend(C_DOWN, C_BG, 150 - 110 * (y - (GH - dh)) / GH);
+      if (dh > 0) col[GH - dh] = C_DOWN;
+      int uy = GH - 2 - (int)(hist_up[i] / top * (GH - 2) + 0.5f);
       int a = prev_uy < 0 ? uy : prev_uy, b = uy;
       if (a > b) { int t = a; a = b; b = t; }
       for (int y = a; y <= b; y++) col[y] = C_UP;
@@ -199,17 +217,20 @@ static void draw_stats(void) {
   if (!layout_drawn) draw_layout();
 
   fmt_int(buf, sizeof buf, st.cpu, "%");
-  draw_gauge(ROW_CPU, st.cpu, alert(C_CPU, st.cpu, 80), buf);
+  draw_gauge(0, st.cpu, alert(C_CPU, st.cpu, 80), buf);
   fmt_int(buf, sizeof buf, st.ram, "%");
-  draw_gauge(ROW_RAM, st.ram, alert(C_RAM, st.ram, 80), buf);
+  draw_gauge(1, st.ram, alert(C_RAM, st.ram, 80), buf);
   /* Température : barre de 0 à 100 °C, rouge à partir de 75 °C. */
   fmt_int(buf, sizeof buf, st.temp, CH_DEGREE "C");
-  draw_gauge(ROW_TEMP, st.temp, alert(C_TEMP, st.temp, 75), buf);
+  draw_gauge(2, st.temp, alert(C_TEMP, st.temp, 75), buf);
 
+  int tx = RX + 18, tw = GX - 2 - tx; /* jusqu'au graphe : efface tout ancien texte */
   fmt_rate(buf, sizeof buf, st.down);
-  text_right(GX - 6, 110, buf, C_TEXT, 120);
+  st7789_fill_rect(gfx_text(tx, NET_Y, &font_medium, buf, C_TEXT, C_BG), NET_Y,
+                   tw - gfx_text_width(&font_medium, buf), font_medium.height, C_BG);
   fmt_rate(buf, sizeof buf, st.up);
-  text_right(GX - 6, 140, buf, C_TEXT, 120);
+  st7789_fill_rect(gfx_text(tx, NET_Y + 24, &font_medium, buf, C_TEXT, C_BG), NET_Y + 24,
+                   tw - gfx_text_width(&font_medium, buf), font_medium.height, C_BG);
 
   if (hist_len == GW) {
     memmove(hist_down, hist_down + 1, (GW - 1) * sizeof(float));
@@ -223,9 +244,13 @@ static void draw_stats(void) {
 }
 
 static void draw_waiting(void) {
-  static const char msg[] = "En attente du serveur";
-  st7789_fill_rect(0, 0, W, H, C_BG);
-  st7789_text((W - (int)(sizeof msg - 1) * 12) / 2, H / 2 - 8, msg, 2, C_DIM, C_BG);
+  draw_right_bg();
+  static const char *lines[] = {"En attente", "du serveur"};
+  for (int i = 0; i < 2; i++) {
+    int tw = gfx_text_width(&font_medium, lines[i]);
+    gfx_text(RX + (RW - tw) / 2, H / 2 - font_medium.height + i * (font_medium.height + 2),
+             &font_medium, lines[i], C_DIM, C_BG);
+  }
   layout_drawn = 0;
 }
 
@@ -256,10 +281,7 @@ static int parse_line(char *line) {
   if (!measures) return 0;
   int host_changed = strcmp(s.host, st.host) != 0;
   st = s;
-  if (layout_drawn && host_changed) {
-    draw_header();
-    draw_status();
-  }
+  if (host_changed) draw_host();
   return 1;
 }
 
@@ -270,9 +292,14 @@ void sysmon_init(void) {
   static const uint16_t test[] = {RGB565(255, 0, 0), RGB565(0, 255, 0), RGB565(0, 0, 255)};
   for (int i = 0; i < 3; i++) {
     st7789_fill_rect(0, 0, W, H, test[i]);
-    HAL_Delay(400);
+    HAL_Delay(250);
   }
+  st7789_fill_rect(0, 0, W, H, C_BG);
+  draw_card();
+  draw_anim();
+  draw_host();
   draw_waiting();
+  next_frame = HAL_GetTick() + anim.duration_ms;
 }
 
 void sysmon_loop(void) {
@@ -292,15 +319,23 @@ void sysmon_loop(void) {
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin); /* LED bleue : clignote à chaque ligne */
     if (!online) {
       online = 1;
-      if (layout_drawn) draw_status();
+      draw_host();
     }
     draw_stats();
   }
 
-  uint32_t idle = HAL_GetTick() - last_rx;
+  uint32_t now = HAL_GetTick();
+  if ((int32_t)(now - next_frame) >= 0) {
+    frame = (frame + 1) % anim.frames;
+    draw_anim();
+    next_frame += anim.duration_ms;
+    if ((int32_t)(now - next_frame) > 0) next_frame = now + anim.duration_ms; /* retard : on recale */
+  }
+
+  uint32_t idle = now - last_rx;
   if (online && idle > TIMEOUT_MS) {
     online = 0;
-    draw_status();
+    draw_host();
     HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET); /* éteinte */
   }
   if (layout_drawn && !online && idle > WAITING_MS) {
