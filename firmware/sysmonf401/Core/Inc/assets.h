@@ -23,7 +23,7 @@ typedef struct {
   const uint8_t *delta;
 } Anim;
 
-#define ANIM_PIXELS 15120 /* width * height, pour le tampon de l'image affichée */
+#define ANIM_PIXELS 17152 /* width * height, pour le tampon de l'image affichée */
 
 /* Caractères spéciaux des polices small et medium (et ° dans large). */
 #define CH_UP     "\x01"

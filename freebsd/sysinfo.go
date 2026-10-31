@@ -125,11 +125,11 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// OSLabel renvoie le système et sa version, comme uname -sr (ex. « FreeBSD 15.0-RELEASE-p9 »).
+// OSLabel renvoie la version du système, comme uname -r (ex. « 15.0-RELEASE-p9 »).
 func OSLabel() string {
 	var u unix.Utsname
 	if unix.Uname(&u) != nil {
 		return "FreeBSD"
 	}
-	return unix.ByteSliceToString(u.Sysname[:]) + " " + unix.ByteSliceToString(u.Release[:])
+	return unix.ByteSliceToString(u.Release[:])
 }

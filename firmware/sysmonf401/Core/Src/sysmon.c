@@ -1,13 +1,13 @@
 /* Afficheur CPU / RAM / température / réseau pour serveur FreeBSD.
  *
  * Le PC envoie une ligne de texte par seconde sur le port série USB, ex. :
- *   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
+ *   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=15.0-RELEASE-p9
  * down / up en octets par seconde. Une clé absente = mesure indisponible (« -- »).
  * os = texte sous l'animation, _ pour les espaces (host= est accepté aussi).
  * bri=0 éteint le rétroéclairage, toute autre valeur l'allume (peut être seul sur sa ligne).
  *
  * Écran 320x170 sur fond blanc : à gauche l'animation (assets.c, généré par
- * tools/mkassets.py) et le système ; à droite les jauges et le réseau. */
+ * tools/mkassets.py) et la version du système ; à droite les jauges et le réseau. */
 
 #include "sysmon.h"
 #include "gfx.h"
@@ -38,11 +38,11 @@
 #define C_GREEN     RGB565(30, 180, 90)
 #define C_DOWN      RGB565(20, 170, 90)
 #define C_UP        RGB565(150, 90, 230)
-#define C_BSD       RGB565(171, 22, 32) /* rouge du logo FreeBSD */
 
-/* Colonne de gauche : animation puis système et version. */
+/* Colonne de gauche : animation puis version du système. */
 #define LEFT_W 138
-#define LABEL_Y 126 /* l'animation (120 px de haut au plus) est centrée au-dessus */
+#define LABEL_W 142 /* le libellé peut déborder jusqu'à la colonne de droite */
+#define LABEL_Y (H - 4 - font_medium.height) /* une ligne en bas, animation centrée au-dessus */
 #define ANIM_X ((LEFT_W - anim.width) / 2)
 #define ANIM_Y ((LABEL_Y - anim.height) / 2)
 
@@ -101,43 +101,29 @@ static void fit(char *s, const Font *f, int maxw) {
   }
 }
 
-/* Sous l'animation : pastille d'état et système (« FreeBSD », aux couleurs du
- * logo), puis la version en plus petit (« 15.0-RELEASE-p9 »). */
+/* Sous l'animation : pastille d'état et version du système (« 15.0-RELEASE-p9 »),
+ * en police moyenne si elle tient, sinon en petite. Rien reçu : la pastille seule. */
 static void draw_label(void) {
-  char l1[24] = "FreeBSD", l2[40] = "";
-  if (st.label[0]) {
-    const char *sp = strchr(st.label, ' ');
-    size_t n = sp ? (size_t)(sp - st.label) : strlen(st.label);
-    if (n >= sizeof l1) n = sizeof l1 - 1;
-    memcpy(l1, st.label, n);
-    l1[n] = 0;
-    if (sp) strncpy(l2, sp + 1, sizeof l2 - 1);
-  }
-  int dot = 10, gap = 6;
-  fit(l1, &font_medium, LEFT_W - 8 - dot - gap);
-  fit(l2, &font_small, LEFT_W - 8);
+  char text[40];
+  int dot = 8, gap = 5, maxw = LABEL_W - 2 - dot - gap;
+  strcpy(text, st.label);
+  const Font *f = &font_medium;
+  if (gfx_text_width(f, text) > maxw) f = &font_small;
+  fit(text, f, maxw);
 
-  st7789_fill_rect(0, LABEL_Y, LEFT_W, font_medium.height + font_small.height, C_BG);
-  int tw = gfx_text_width(&font_medium, l1);
-  int x = (LEFT_W - (dot + gap + tw)) / 2;
+  st7789_fill_rect(0, LABEL_Y, LABEL_W, font_medium.height, C_BG);
+  int tw = gfx_text_width(f, text);
+  int x = (LABEL_W - (dot + (tw ? gap + tw : 0))) / 2;
   gfx_round_rect(x, LABEL_Y + (font_medium.height - dot) / 2, dot, dot, dot / 2,
                  online ? C_GREEN : C_RED, C_BG);
-  x += dot + gap;
-  if (!strcmp(l1, "FreeBSD")) {
-    x = gfx_text(x, LABEL_Y, &font_medium, "Free", C_TEXT, C_BG);
-    gfx_text(x, LABEL_Y, &font_medium, "BSD", C_BSD, C_BG);
-  } else {
-    gfx_text(x, LABEL_Y, &font_medium, l1, C_TEXT, C_BG);
-  }
-  if (l2[0])
-    gfx_text((LEFT_W - gfx_text_width(&font_small, l2)) / 2, LABEL_Y + font_medium.height,
-             &font_small, l2, C_DIM, C_BG);
+  if (tw)
+    gfx_text(x + dot + gap, LABEL_Y + (font_medium.height - f->height) / 2, f, text, C_TEXT, C_BG);
 }
 
 /* --- Colonne de droite --- */
 
 static void draw_right_bg(void) {
-  st7789_fill_rect(LEFT_W, 0, W - LEFT_W, H, C_BG);
+  st7789_fill_rect(LABEL_W, 0, W - LABEL_W, H, C_BG);
 }
 
 static void draw_layout(void) {

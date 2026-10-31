@@ -2,7 +2,7 @@ package main
 
 // sysmonf401 : envoie une fois par seconde CPU / RAM / température / débit réseau
 // à l'afficheur Black Pill F401 + ST7789, sous forme d'une ligne de texte :
-//   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
+//   cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=15.0-RELEASE-p9
 // Sort en erreur si l'afficheur disparaît ; rc.d (daemon -r) le relance.
 
 import (
@@ -20,7 +20,7 @@ func main() {
 	interval := flag.Duration("interval", time.Second, "période de mise à jour")
 	bright := flag.Int("brightness", -1, "rétroéclairage au démarrage : 0 = éteint, sinon allumé")
 	iface := flag.String("iface", "", "interfaces réseau à compter, séparées par des virgules (vide = toutes sauf lo)")
-	label := flag.String("label", "", "texte affiché sous l'animation (par défaut : système et version, comme uname -sr)")
+	label := flag.String("label", "", "texte affiché sous l'animation (par défaut : la version du système, comme uname -r)")
 	noARC := flag.Bool("no-arc", false, "ne pas compter l'ARC ZFS comme RAM utilisée")
 	flag.Parse()
 

@@ -16,8 +16,8 @@ download / upload rates, sent once a second by the server over USB serial.
 *Rendered by the firmware's own drawing code on a PC (`tools/preview`), scaled up ×2.*
 
 - White background. Left: an animated GIF (FreeBSD's Beastie by default), with the
-  system and its version underneath (`uname -sr`, e.g. FreeBSD 15.0-RELEASE-p9) and a
-  status dot (green = data is arriving, red = nothing for 5 s).
+  system version underneath (`uname -r`, e.g. 15.0-RELEASE-p9) and a status dot
+  (green = data is arriving, red = nothing for 5 s).
 - Right: CPU, RAM and CPU temperature in large anti-aliased digits with a bar each
   (red above 80 %, or from 75 °C); download / upload rates and their history
   (download as a green area, upload as a violet line, ~70 s).
@@ -82,11 +82,11 @@ The current animation is `tools/beastie_trident.gif` (8 s, 120 frames), built wi
 
 ```
 pip install pillow
-python tools/mkassets.py --crop 135,12,485,346 --noise 800 tools/beastie_trident.gif firmware/sysmonf401
+python tools/mkassets.py --crop 135,12,485,346 --noise 800 --max-h 128 --gamma 0.7 tools/beastie_trident.gif firmware/sysmonf401
 ```
 
-It keeps one frame in two (`--step 2`, 60 frames of 133 ms, 126x120, 142 KB); the
-firmware takes 218 KB of the F401CC's 256 KB of flash. For another GIF (white background
+It keeps one frame in two (`--step 2`, 60 frames of 133 ms, 134x128, 152 KB), brightened
+(`--gamma 0.7`); the firmware takes 228 KB of the F401CC's 256 KB of flash. For another GIF (white background
 works best), run the script with its path and look at the sizes it prints; for a longer
 or larger one, raise `--step` or `--noise`, or lower `--max-h` / `--colors`. Then build and
 flash.
@@ -183,7 +183,7 @@ Options:
 | `-port /dev/cuaU0` | automatic | Serial port; found by VID/PID `0483:5740` if empty (`cuaU0` alone also works) |
 | `-interval 1s` | `1s` | Update period |
 | `-iface em0,igb1` | all but `lo*` | Interfaces counted for the network rates |
-| `-label text` | `uname -sr` | Text shown under the animation, e.g. `FreeBSD 15.0-RELEASE-p9`: first word on the first line, the rest underneath |
+| `-label text` | `uname -r` | Text shown under the animation, e.g. `15.0-RELEASE-p9` |
 | `-brightness N` | unchanged | Backlight: 0 = off, anything else = on |
 | `-no-arc` | off | Do not count the ZFS ARC as used RAM |
 
@@ -211,7 +211,7 @@ When the data stops, the dot turns red after 5 s, and the screen goes back to
 One text line per sample, `key=value` pairs separated by spaces, ending with `\n`:
 
 ```
-cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
+cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=15.0-RELEASE-p9
 ```
 
 | Key | Value |
@@ -223,7 +223,7 @@ cpu=12.5 ram=43.1 temp=52.0 down=123456 up=7890 os=FreeBSD_15.0-RELEASE-p9
 | `bri` | Backlight: 0 = off, anything else = on; can be sent alone |
 
 A missing key shows `--`. So the board can be fed by anything, for example from a shell:
-`echo "cpu=50 ram=20 os=FreeBSD_test" > /dev/cuaU0`.
+`echo "cpu=50 ram=20 os=test" > /dev/cuaU0`.
 
 Sources: `kern.cp_time` (CPU), `hw.physmem` and `vm.stats.vm.*` (RAM, available = free +
 inactive + laundry pages, as in `top`), `dev.cpu.N.temperature` (hottest core),

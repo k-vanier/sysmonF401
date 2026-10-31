@@ -10,7 +10,8 @@ rendu dans une cellule de sa largeur d'avance, alpha sur 4 bits.
 
 Animation : chaque image est recadrée (--crop, sinon union des zones non blanches
 de toutes les images, légende séparée exclue), réduite pour tenir dans
---max-w x --max-h, et son fond presque blanc est ramené au blanc pur de l'écran.
+--max-w x --max-h, éclaircie si besoin (--gamma < 1 : tons moyens plus clairs, blanc
+et noir inchangés), et son fond presque blanc est ramené au blanc pur de l'écran.
 Toutes les images partagent une palette. Les pixels sont rangés colonne par
 colonne (de gauche à droite, chaque colonne de haut en bas : l'axe de balayage de
 la dalle en paysage, ce qui limite le déchirement).
@@ -167,7 +168,7 @@ def encode(seq, prev=None):
     return out
 
 
-def make_anim(path, step, crop, max_w, max_h, colors, noise):
+def make_anim(path, step, crop, max_w, max_h, colors, noise, gamma):
     src = [f.convert("RGB") for f in ImageSequence.Iterator(Image.open(path))]
     durations = [f.info.get("duration", 100) for f in ImageSequence.Iterator(Image.open(path))]
     duration = round(sum(durations) / len(durations) * step)
@@ -176,7 +177,8 @@ def make_anim(path, step, crop, max_w, max_h, colors, noise):
     cw, ch = bbox[2] - bbox[0], bbox[3] - bbox[1]
     scale = min(max_w / cw, max_h / ch)
     w, h = round(cw * scale), round(ch * scale)
-    out = [whiten(f.crop(bbox).resize((w, h), Image.LANCZOS)) for f in frames]
+    lut = [round(255 * (v / 255) ** gamma) for v in range(256)] * 3
+    out = [whiten(f.crop(bbox).resize((w, h), Image.LANCZOS).point(lut)) for f in frames]
 
     # Palette commune : quantification d'une planche de toutes les images. La
     # couleur la plus fréquente (le fond) est forcée au blanc pur s'il est clair.
@@ -206,7 +208,10 @@ def make_anim(path, step, crop, max_w, max_h, colors, noise):
     deltas = {}
     for i in list(range(1, len(cols))) + [0]:
         # Retour à la première image : exact, pour que chaque tour reparte de key.
-        new = list(cols[0]) if i == 0 else [v if far(v, s) else s for v, s in zip(cols[i], shown)]
+        # Un pixel qui redevient fond est toujours réécrit : sinon des traces claires
+        # (restes d'effets) proches du blanc resteraient affichées.
+        new = list(cols[0]) if i == 0 else [v if v == bg or far(v, s) else s
+                                            for v, s in zip(cols[i], shown)]
         deltas[i] = encode(new, shown)
         shown = new
     data, offsets = bytearray(), []
@@ -276,6 +281,8 @@ def main():
     ap.add_argument("--colors", type=int, default=64, help="taille de la palette (défaut 64)")
     ap.add_argument("--noise", type=int, default=300,
                     help="écart de couleur (somme des carrés RVB) sous lequel un pixel affiché est gardé (défaut 300)")
+    ap.add_argument("--gamma", type=float, default=1.0,
+                    help="correction gamma, < 1 éclaircit les tons moyens (défaut 1, aucune)")
     ap.add_argument("--preview", help="écrit la planche des images quantifiées dans ce PNG")
     a = ap.parse_args()
     crop = tuple(int(v) for v in a.crop.split(",")) if a.crop else None
@@ -287,7 +294,7 @@ def main():
         parts.append(code)
         total += n
         print(f"{name}: {n} octets")
-    code, n, preview, (w, h, nf, dur) = make_anim(a.gif, a.step, crop, a.max_w, a.max_h, a.colors, a.noise)
+    code, n, preview, (w, h, nf, dur) = make_anim(a.gif, a.step, crop, a.max_w, a.max_h, a.colors, a.noise, a.gamma)
     parts.append(code)
     total += n
     print(f"anim: {nf} images {w}x{h}, {dur} ms, {n} octets")
