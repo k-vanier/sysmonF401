@@ -35,7 +35,7 @@
 #define C_RAM       RGB565(140, 80, 220)
 #define C_TEMP      RGB565(240, 140, 20)
 #define C_RED       RGB565(220, 40, 40)
-#define C_DOWN      RGB565(20, 170, 90)
+#define C_DOWN      RGB565(236, 72, 153) /* rose */
 #define C_UP        RGB565(150, 90, 230)
 
 /* Colonne de gauche : animation puis version du système. */
